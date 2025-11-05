@@ -14,8 +14,9 @@
 # Go workspace file
 go.work
 
-# Binary name
+# Binary names
 ddbviewer
+ddb-explorer
 
 # Jujutsu version control
 .jj/

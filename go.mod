@@ -1,4 +1,4 @@
-module ddbviewer
+module ddb-explorer
 
 go 1.25.0
 

@@ -1,7 +1,7 @@
-# DynamoDB TUI Viewer Makefile
+# DynamoDB TUI Explorer Makefile
 
 # Variables
-BINARY_NAME=ddbviewer
+BINARY_NAME=ddb-explorer
 GO_FILES=$(shell find . -name "*.go" -not -path "./vendor/*")
 VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -122,7 +122,7 @@ check: fmt tidy lint test
 # Show available make targets
 .PHONY: help
 help:
-	@echo "$(BOLD)$(BLUE)DynamoDB TUI Viewer - Available Make Targets:$(RESET)"
+	@echo "$(BOLD)$(BLUE)DynamoDB TUI Explorer - Available Make Targets:$(RESET)"
 	@echo
 	@echo "$(YELLOW)Building:$(RESET)"
 	@echo "  $(GREEN)build$(RESET)          Build the $(BINARY_NAME) binary"

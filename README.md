@@ -1,4 +1,4 @@
-# DynamoDB TUI Viewer
+# DynamoDB TUI Explorer
 
 A terminal user interface (TUI) application for browsing Amazon DynamoDB tables, built with Go and the [tview](https://github.com/rivo/tview) framework.
 
@@ -27,7 +27,12 @@ go mod download
 
 2. Build the application:
 ```bash
-go build -o ddbviewer
+go build -o ddb-explorer
+```
+
+Or use the Makefile:
+```bash
+make build
 ```
 
 ## Usage
@@ -36,12 +41,17 @@ go build -o ddbviewer
 
 Run with default profile (dev):
 ```bash
-./ddbviewer
+./ddb-explorer
+```
+
+Or simply:
+```bash
+make
 ```
 
 Run with a specific profile:
 ```bash
-./ddbviewer --profile prod
+./ddb-explorer --profile prod
 ```
 
 ### Keyboard Shortcuts
@@ -99,11 +109,11 @@ When querying with a sort key, the following conditions are supported:
 ## Project Structure
 
 ```
-ddbviewer/
+ddb-explorer/
 ├── main.go           # Entry point and UI logic
 ├── aws/
 │   └── dynamodb.go   # AWS DynamoDB client wrapper
-├── models/           # (Reserved for future model separation)
+├── Makefile          # Build and development tasks
 ├── go.mod            # Go module definition
 ├── go.sum            # Go module checksums
 └── README.md         # This file

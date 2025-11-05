@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ddbviewer/aws"
+	"ddb-explorer/aws"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,11 +18,47 @@ var showHelp = flag.Bool("help", false, "Show help and usage information")
 
 var tables []aws.TableInfo
 
+// Custom color scheme
+var (
+	// Background colors
+	bgPrimary   = tcell.NewHexColor(0x1a1a1a) // Dark gray
+	bgSecondary = tcell.NewHexColor(0x2d2d2d) // Medium gray
+	bgAccent    = tcell.NewHexColor(0x404040) // Light gray
+	
+	// Text colors
+	textPrimary   = tcell.NewHexColor(0xe8e8e8) // Light gray
+	textSecondary = tcell.NewHexColor(0xb8b8b8) // Medium gray
+	textAccent    = tcell.NewHexColor(0xff9500) // Orange (primary)
+	
+	// Accent colors
+	accentOrange = tcell.NewHexColor(0xff9500) // Primary orange
+	accentTeal   = tcell.NewHexColor(0x5ac8fa) // Complementary teal
+	accentGreen  = tcell.NewHexColor(0x30d158) // Success green
+	accentRed    = tcell.NewHexColor(0xff453a) // Error red
+	accentYellow = tcell.NewHexColor(0xffd60a) // Warning yellow
+)
+
+func applyCustomTheme() {
+	tview.Styles = tview.Theme{
+		PrimitiveBackgroundColor:    bgPrimary,
+		ContrastBackgroundColor:     accentOrange,
+		MoreContrastBackgroundColor: accentTeal,
+		BorderColor:                 bgAccent,
+		TitleColor:                  accentOrange,
+		GraphicsColor:               textPrimary,
+		PrimaryTextColor:            textPrimary,
+		SecondaryTextColor:          textSecondary,
+		TertiaryTextColor:           accentOrange,
+		InverseTextColor:            tcell.NewHexColor(0x121212), // Dark text on orange
+		ContrastSecondaryTextColor:  textSecondary,
+	}
+}
+
 func printHelp() {
-	fmt.Println(`DynamoDB TUI Viewer - Terminal interface for browsing DynamoDB tables
+	fmt.Println(`DynamoDB TUI Explorer - Terminal interface for browsing DynamoDB tables
 
 USAGE:
-    ddbviewer [--profile PROFILE]
+    ddb-explorer [--profile PROFILE]
 
 OPTIONS:
     --profile    AWS profile to use (default: dev)
@@ -60,10 +96,10 @@ JSON Viewer:
 
 EXAMPLES:
     # Run with default (dev) profile
-    ./ddbviewer
+    ./ddb-explorer
 
     # Run with production profile
-    ./ddbviewer --profile prod
+    ./ddb-explorer --profile prod
 
 QUERY CONDITIONS:
     =              Exact match
@@ -117,6 +153,9 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Apply custom theme before creating any widgets
+	applyCustomTheme()
+
 	// Validate profile
 	if *profile != "dev" && *profile != "prod" {
 		fmt.Printf("Invalid profile: %s. Must be 'dev' or 'prod'\n", *profile)
@@ -148,19 +187,55 @@ func main() {
 	table := tview.NewTable().
 		SetBorders(true).
 		SetSelectable(true, false)
+	
+	// Wrap table in flex to add margins and center it
+	tableFlex := tview.NewFlex().
+		AddItem(nil, 0, 1, false).                    // Left margin
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 1, 0, false).                 // Top margin
+			AddItem(table, 0, 1, true).                // Table
+			AddItem(nil, 1, 0, false), 0, 3, true).   // Bottom margin
+		AddItem(nil, 0, 1, false)                     // Right margin
 
-	// Set initial loading message
-	table.SetCell(0, 0, tview.NewTableCell("Loading tables...").
-		SetTextColor(tview.Styles.PrimaryTextColor))
+	// Create MOTD-style loading screen
+	loadingText := fmt.Sprintf(`
+  ____  ____  ____       _____            _                     
+ |  _ \|  _ \| __ )     | ____|_  ___ __ | | ___  _ __ ___ _ __ 
+ | | | | | | |  _ \ ____|  _| \ \/ / '_ \| |/ _ \| '__/ _ \ '__|
+ | |_| | |_| | |_) |____| |___ >  <| |_) | | (_) | | |  __/ |   
+ |____/|____/|____/     |_____/_/\_\ .__/|_|\___/|_|  \___|_|   
+                                   |_|                           
 
-	// Add table list page
-	pages.AddPage("tablelist", table, true, true)
+
+[orange::b]Loading Tables...[white::-]
+
+
+[gray]Profile: %s[white::-]
+`, *profile)
+
+	loadingView := tview.NewTextView().
+		SetText(loadingText).
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(accentOrange).
+		SetDynamicColors(true)
+	loadingView.SetBorder(true).
+		SetBorderColor(accentOrange).
+		SetTitle(" Welcome ").
+		SetTitleColor(accentOrange).
+		SetTitleAlign(tview.AlignCenter)
+
+	// Add loading screen as initial page
+	pages.AddPage("loading", loadingView, true, true)
+	pages.AddPage("tablelist", tableFlex, true, false)
 
 	// Load tables asynchronously
 	go func() {
 		tableInfos, err := client.ListTables()
 		app.QueueUpdateDraw(func() {
-			// Clear loading
+			// Switch from loading screen to table list
+			pages.SwitchToPage("tablelist")
+			
+			// Clear any initial state
 			table.Clear()
 
 			// Set headers
@@ -232,6 +307,13 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 	form.SetCancelFunc(func() {
 		pages.SwitchToPage("tablelist")
 	})
+	
+	// Apply form styling
+	form.SetLabelColor(textSecondary).
+		SetFieldBackgroundColor(accentOrange).
+		SetFieldTextColor(tcell.NewHexColor(0x121212)).
+		SetButtonBackgroundColor(accentOrange).
+		SetButtonTextColor(tcell.NewHexColor(0x121212))
 
 	// Tabs flex
 	tabsFlex := tview.NewFlex().SetDirection(tview.FlexColumn)
@@ -241,7 +323,8 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 		SetText("[ Query ]").
 		SetTextAlign(tview.AlignCenter).
 		SetDynamicColors(true).
-		SetTextColor(tview.Styles.PrimaryTextColor)
+		SetTextColor(tcell.NewHexColor(0x121212))
+	queryTab.SetBackgroundColor(accentOrange)
 	tabsFlex.AddItem(queryTab, 0, 1, true)
 
 	// Scan tab
@@ -249,7 +332,8 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 		SetText("  Scan  ").
 		SetTextAlign(tview.AlignCenter).
 		SetDynamicColors(true).
-		SetTextColor(tview.Styles.SecondaryTextColor)
+		SetTextColor(textSecondary)
+	scanTab.SetBackgroundColor(bgSecondary)
 	tabsFlex.AddItem(scanTab, 0, 1, false)
 
 	flex.AddItem(tabsFlex, 1, 0, false)
@@ -280,6 +364,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 				// Show loading
 				loadingModal := tview.NewModal().
 					SetText("Querying...").
+					SetTextColor(tcell.NewHexColor(0x121212)).
 					SetDoneFunc(func(buttonIndex int, buttonLabel string) {})
 				pages.AddPage("loading", loadingModal, false, true)
 
@@ -453,6 +538,8 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 				// Add navigation buttons
 				navFlex := tview.NewFlex().SetDirection(tview.FlexColumn)
 				
+				btnStyle := tcell.StyleDefault.Background(accentOrange).Foreground(tcell.NewHexColor(0x121212))
+				
 				loadPrevBtn := tview.NewButton("< Previous (Ctrl+B)").SetSelectedFunc(func() {
 					if currentPage > 1 {
 						currentPage--
@@ -460,6 +547,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 						updateResultsTable(aws.QueryResult{Items: prevState.items, LastEvaluatedKey: prevState.lastEvaluatedKey}, currentPage, additionalFields)
 					}
 				})
+				loadPrevBtn.SetStyle(btnStyle)
 				navFlex.AddItem(loadPrevBtn, 0, 1, false)
 				
 				var loadNextBtn *tview.Button
@@ -484,6 +572,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 							navFlex.RemoveItem(loadNextBtn)
 						}
 					})
+					loadNextBtn.SetStyle(btnStyle)
 					navFlex.AddItem(loadNextBtn, 0, 1, false)
 				}
 				
@@ -688,17 +777,14 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 				}()
 			})
 			
-			// Set focus to first form item after adding all items
-			if form.GetFormItemCount() > 0 {
-				app.SetFocus(form.GetFormItem(0))
-			} else if form.GetButtonCount() > 0 {
-				app.SetFocus(form.GetButton(0))
-			}
+			// Set focus to form itself to enable Tab navigation
+			app.SetFocus(form)
 		} else { // Scan
 			form.AddButton(fmt.Sprintf("Scan %s", tableInfo.Name), func() {
 				// Show loading modal
 				loadingModal := tview.NewModal().
-					SetText("Scanning...")
+					SetText("Scanning...").
+					SetTextColor(tcell.NewHexColor(0x121212))
 				pages.AddPage("loadingscan", loadingModal, true, true)
 
 				// Perform scan async
@@ -867,6 +953,8 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 							// Add navigation buttons
 							navFlex := tview.NewFlex().SetDirection(tview.FlexColumn)
 							
+							btnStyle := tcell.StyleDefault.Background(accentOrange).Foreground(tcell.NewHexColor(0x121212))
+							
 							loadPrevBtn := tview.NewButton("< Previous (Ctrl+B)").SetSelectedFunc(func() {
 								if currentPage > 1 {
 									currentPage--
@@ -874,6 +962,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 									updateResultsTable(aws.QueryResult{Items: prevState.items, RawItems: prevState.rawItems, LastEvaluatedKey: prevState.lastEvaluatedKey}, currentPage, additionalFields)
 								}
 							})
+							loadPrevBtn.SetStyle(btnStyle)
 							navFlex.AddItem(loadPrevBtn, 0, 1, false)
 							
 							var loadNextBtn *tview.Button
@@ -898,6 +987,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 										navFlex.RemoveItem(loadNextBtn)
 									}
 								})
+								loadNextBtn.SetStyle(btnStyle)
 								navFlex.AddItem(loadNextBtn, 0, 1, false)
 							}
 							
@@ -1104,10 +1194,8 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 				}()
 			})
 			
-			// Set focus to the scan button
-			if form.GetButtonCount() > 0 {
-				app.SetFocus(form.GetButton(0))
-			}
+			// Set focus to form itself
+			app.SetFocus(form)
 		}
 	}
 
@@ -1124,8 +1212,10 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 			if currentTab != 0 {
 				currentTab = 0
 				updateForm(currentTab)
-				queryTab.SetTextColor(tview.Styles.PrimaryTextColor)
-				scanTab.SetTextColor(tview.Styles.SecondaryTextColor)
+				queryTab.SetTextColor(tcell.NewHexColor(0x121212))
+				queryTab.SetBackgroundColor(accentOrange)
+				scanTab.SetTextColor(textSecondary)
+				scanTab.SetBackgroundColor(bgSecondary)
 			}
 			return nil
 		} else if event.Key() == tcell.KeyCtrlS {
@@ -1133,19 +1223,25 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 			if currentTab != 1 {
 				currentTab = 1
 				updateForm(currentTab)
-				queryTab.SetTextColor(tview.Styles.SecondaryTextColor)
-				scanTab.SetTextColor(tview.Styles.PrimaryTextColor)
+				queryTab.SetTextColor(textSecondary)
+				queryTab.SetBackgroundColor(bgSecondary)
+				scanTab.SetTextColor(tcell.NewHexColor(0x121212))
+				scanTab.SetBackgroundColor(accentOrange)
 			}
 			return nil
 		} else if event.Key() == tcell.KeyRight || event.Key() == tcell.KeyLeft {
 			currentTab = 1 - currentTab
 			updateForm(currentTab)
 			if currentTab == 0 {
-				queryTab.SetTextColor(tview.Styles.PrimaryTextColor)
-				scanTab.SetTextColor(tview.Styles.SecondaryTextColor)
+				queryTab.SetTextColor(tcell.NewHexColor(0x121212))
+				queryTab.SetBackgroundColor(accentOrange)
+				scanTab.SetTextColor(textSecondary)
+				scanTab.SetBackgroundColor(bgSecondary)
 			} else {
-				queryTab.SetTextColor(tview.Styles.SecondaryTextColor)
-				scanTab.SetTextColor(tview.Styles.PrimaryTextColor)
+				queryTab.SetTextColor(textSecondary)
+				queryTab.SetBackgroundColor(bgSecondary)
+				scanTab.SetTextColor(tcell.NewHexColor(0x121212))
+				scanTab.SetBackgroundColor(accentOrange)
 			}
 		}
 		return event
