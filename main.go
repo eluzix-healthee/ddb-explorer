@@ -144,6 +144,66 @@ func formatBytes(bytes int64) string {
 	}
 }
 
+func createHelpModal(pages *tview.Pages) *tview.TextView {
+	helpText := `[::b]DDB-Explorer - Keyboard Shortcuts[::-]
+
+[#ff9500::b]Table List:[white::-]
+  [#ff9500]↑/↓[white]         Navigate tables
+  [#ff9500]Enter[white]       Select table
+  [#ff9500]q/ESC[white]       Quit
+  [#ff9500]Ctrl+H[white]      Show help
+
+[#ff9500::b]Query/Scan View:[white::-]
+  [#ff9500]Tab[white]         Navigate fields
+  [#ff9500]Ctrl+Q[white]      Switch to Query tab
+  [#ff9500]Ctrl+S[white]      Switch to Scan tab
+  [#ff9500]←/→[white]         Switch tabs
+  [#ff9500]Enter[white]       Execute query/scan
+  [#ff9500]ESC[white]         Back to table list
+
+[#ff9500::b]Results View:[white::-]
+  [#ff9500]↑/↓[white]         Navigate items
+  [#ff9500]Enter[white]       View item details
+  [#ff9500]Ctrl+N[white]      Next page
+  [#ff9500]Ctrl+B[white]      Previous page
+  [#ff9500]ESC[white]         Back to query/scan
+
+[#ff9500::b]Item Details:[white::-]
+  [#ff9500]↑/↓[white]         Navigate fields
+  [#ff9500]Enter[white]       View JSON (complex fields)
+  [#ff9500]Ctrl+D[white]      Download as JSON
+  [#ff9500]ESC[white]         Back to results
+
+[#ff9500::b]JSON Viewer:[white::-]
+  [#ff9500]↑/↓[white]         Scroll line by line
+  [#ff9500]Space[white]       Scroll down one page
+  [#ff9500]ESC[white]         Close viewer
+
+[gray]Press ESC or Ctrl+H to close[white]`
+
+	helpView := tview.NewTextView().
+		SetText(helpText).
+		SetTextAlign(tview.AlignCenter).
+		SetDynamicColors(true).
+		SetScrollable(true)
+	
+	helpView.SetBorder(true).
+		SetBorderColor(accentOrange).
+		SetTitle(" Help ").
+		SetTitleColor(accentOrange).
+		SetTitleAlign(tview.AlignCenter)
+	
+	helpView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyESC || event.Key() == tcell.KeyCtrlH {
+			pages.RemovePage("help")
+			return nil
+		}
+		return event
+	})
+	
+	return helpView
+}
+
 func main() {
 	flag.Parse()
 
@@ -270,6 +330,9 @@ func main() {
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyESC || event.Rune() == 'q' {
 			app.Stop()
+		} else if event.Key() == tcell.KeyCtrlH {
+			pages.AddPage("help", createHelpModal(pages), true, true)
+			return nil
 		} else if event.Key() == tcell.KeyEnter {
 			row, _ := table.GetSelection()
 			if row > 0 && row <= len(tables) {
@@ -580,6 +643,9 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 							resultsFlex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 							if event.Key() == tcell.KeyESC {
 							pages.RemovePage("queryresult")
+							} else if event.Key() == tcell.KeyCtrlH {
+								pages.AddPage("help", createHelpModal(pages), true, true)
+								return nil
 							} else if event.Key() == tcell.KeyCtrlB {
 						// Go back to previous page
 						if currentPage > 1 {
@@ -611,7 +677,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 										item := result.Items[row-1]
 										rawItem := result.RawItems[row-1]
 										
-										// Create item table
+										// Create item table (QUERY RESULTS)
 										itemTable := tview.NewTable().
 											SetBorders(true).
 											SetSelectable(true, false)
@@ -710,11 +776,14 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 
 										// Create flex for the table
 										itemFlex := tview.NewFlex().SetDirection(tview.FlexRow)
-										itemFlex.AddItem(tview.NewTextView().SetText("Full Item (Ctrl+D: download as JSON)").SetTextAlign(tview.AlignCenter), 1, 0, false)
+										itemFlex.AddItem(tview.NewTextView().SetText("Full Item (Ctrl+D: download | Ctrl+H: help)").SetTextAlign(tview.AlignCenter), 1, 0, false)
 										itemFlex.AddItem(itemTable, 0, 1, true)
 										itemFlex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 											if event.Key() == tcell.KeyESC {
 												pages.RemovePage("fullitem")
+											} else if event.Key() == tcell.KeyCtrlH {
+												pages.AddPage("help", createHelpModal(pages), true, true)
+												return nil
 											} else if event.Key() == tcell.KeyCtrlD {
 												saveItemAsJSON()
 												return nil
@@ -996,6 +1065,9 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 							resultsFlex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 								if event.Key() == tcell.KeyESC {
 									pages.RemovePage("scanresult")
+								} else if event.Key() == tcell.KeyCtrlH {
+									pages.AddPage("help", createHelpModal(pages), true, true)
+									return nil
 								} else if event.Key() == tcell.KeyCtrlB {
 									// Go back to previous page
 									if currentPage > 1 {
@@ -1027,7 +1099,7 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 										item := result.Items[row-1]
 										rawItem := result.RawItems[row-1]
 										
-										// Create item table (reuse same logic as query)
+										// Create item table (SCAN RESULTS)
 										itemTable := tview.NewTable().
 											SetBorders(true).
 											SetSelectable(true, false)
@@ -1126,11 +1198,14 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 
 										// Create flex for the table
 										itemFlex := tview.NewFlex().SetDirection(tview.FlexRow)
-										itemFlex.AddItem(tview.NewTextView().SetText("Full Item (Ctrl+D: download as JSON)").SetTextAlign(tview.AlignCenter), 1, 0, false)
+										itemFlex.AddItem(tview.NewTextView().SetText("Full Item (Ctrl+D: download | Ctrl+H: help)").SetTextAlign(tview.AlignCenter), 1, 0, false)
 										itemFlex.AddItem(itemTable, 0, 1, true)
 										itemFlex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 											if event.Key() == tcell.KeyESC {
 												pages.RemovePage("fullitem")
+											} else if event.Key() == tcell.KeyCtrlH {
+												pages.AddPage("help", createHelpModal(pages), true, true)
+												return nil
 											} else if event.Key() == tcell.KeyCtrlD {
 												saveItemAsJSON()
 												return nil
@@ -1207,6 +1282,9 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 	flex.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyESC {
 			pages.SwitchToPage("tablelist")
+		} else if event.Key() == tcell.KeyCtrlH {
+			pages.AddPage("help", createHelpModal(pages), true, true)
+			return nil
 		} else if event.Key() == tcell.KeyCtrlQ {
 			// Switch to Query tab
 			if currentTab != 0 {

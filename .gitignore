@@ -15,7 +15,6 @@
 go.work
 
 # Binary names
-ddbviewer
 ddb-explorer
 
 # Jujutsu version control
