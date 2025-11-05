@@ -119,22 +119,6 @@ ddb-explorer/
 └── README.md         # This file
 ```
 
-## AWS Configuration
-
-The application expects AWS credentials to be configured. Example `~/.aws/credentials`:
-
-```ini
-[dev]
-aws_access_key_id = YOUR_DEV_KEY
-aws_secret_access_key = YOUR_DEV_SECRET
-
-[prod]
-aws_access_key_id = YOUR_PROD_KEY
-aws_secret_access_key = YOUR_PROD_SECRET
-```
-
-The default region is set to `us-east-1`. You can modify this in `aws/dynamodb.go` if needed.
-
 ## Troubleshooting
 
 ### "Failed to connect to AWS"
