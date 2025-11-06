@@ -811,10 +811,10 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 											if v, ok := item[sf]; ok {
 												displayValue := fmt.Sprintf("%v", v)
 												itemTable.SetCell(i, 0, tview.NewTableCell(sf).
-													SetTextColor(tview.Styles.SecondaryTextColor).
+													SetTextColor(accentTeal).
 													SetSelectable(true))
 												itemTable.SetCell(i, 1, tview.NewTableCell(displayValue).
-													SetTextColor(tview.Styles.SecondaryTextColor).
+													SetTextColor(accentTeal).
 													SetSelectable(true))
 												delete(item, sf)
 												i++
@@ -1233,10 +1233,10 @@ func createTableActionPage(pages *tview.Pages, app *tview.Application, tableInfo
 											if v, ok := item[sf]; ok {
 												displayValue := fmt.Sprintf("%v", v)
 												itemTable.SetCell(i, 0, tview.NewTableCell(sf).
-													SetTextColor(tview.Styles.SecondaryTextColor).
+													SetTextColor(accentTeal).
 													SetSelectable(true))
 												itemTable.SetCell(i, 1, tview.NewTableCell(displayValue).
-													SetTextColor(tview.Styles.SecondaryTextColor).
+													SetTextColor(accentTeal).
 													SetSelectable(true))
 												delete(item, sf)
 												i++
