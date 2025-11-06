@@ -248,11 +248,22 @@ func main() {
 		SetBorders(true).
 		SetSelectable(true, false)
 	
+	// Create filter input
+	filterInput := tview.NewInputField().
+		SetLabel("Filter: ").
+		SetFieldWidth(0).
+		SetLabelColor(textSecondary).
+		SetFieldBackgroundColor(accentOrange).
+		SetFieldTextColor(tcell.NewHexColor(0x121212))
+	
+	var filteredTables []aws.TableInfo
+	
 	// Wrap table in flex to add margins and center it
 	tableFlex := tview.NewFlex().
 		AddItem(nil, 0, 1, false).                    // Left margin
 		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(nil, 1, 0, false).                 // Top margin
+			AddItem(filterInput, 1, 0, false).         // Filter input
 			AddItem(table, 0, 1, true).                // Table
 			AddItem(nil, 1, 0, false), 0, 3, true).   // Bottom margin
 		AddItem(nil, 0, 1, false)                     // Right margin
@@ -288,44 +299,64 @@ func main() {
 	pages.AddPage("loading", loadingView, true, true)
 	pages.AddPage("tablelist", tableFlex, true, false)
 
-	// Load tables asynchronously
-	go func() {
-		tableInfos, err := client.ListTables()
-		app.QueueUpdateDraw(func() {
-			// Switch from loading screen to table list
-			pages.SwitchToPage("tablelist")
-			
-			// Clear any initial state
-			table.Clear()
-
-			// Set headers
-			headers := []string{"Table Name", "Status", "Item Count", "Size"}
-			for col, header := range headers {
-				table.SetCell(0, col, tview.NewTableCell(header).
-					SetTextColor(tview.Styles.SecondaryTextColor).
-					SetSelectable(false).
-					SetAlign(tview.AlignCenter))
+	// Function to populate table
+	populateTable := func(tablesToShow []aws.TableInfo) {
+		table.Clear()
+		
+		// Set headers
+		headers := []string{"Table Name", "Status", "Item Count", "Size"}
+		for col, header := range headers {
+			table.SetCell(0, col, tview.NewTableCell(header).
+				SetTextColor(tview.Styles.SecondaryTextColor).
+				SetSelectable(false).
+				SetAlign(tview.AlignCenter))
+		}
+		
+		if len(tablesToShow) == 0 {
+			table.SetCell(1, 0, tview.NewTableCell("No tables found.").
+				SetTextColor(tview.Styles.PrimaryTextColor))
+		} else {
+			for i, t := range tablesToShow {
+				table.SetCell(i+1, 0, tview.NewTableCell(t.Name).SetTextColor(tview.Styles.PrimaryTextColor))
+				table.SetCell(i+1, 1, tview.NewTableCell(t.Status).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignCenter))
+				table.SetCell(i+1, 2, tview.NewTableCell(formatWithCommas(t.ItemCount)).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignRight))
+				table.SetCell(i+1, 3, tview.NewTableCell(formatBytes(t.SizeBytes)).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignRight))
 			}
-
-			if err != nil {
-				table.SetCell(1, 0, tview.NewTableCell(fmt.Sprintf("Error: %v", err)).
-					SetTextColor(tview.Styles.PrimaryTextColor))
-			} else if len(tableInfos) == 0 {
-				table.SetCell(1, 0, tview.NewTableCell("No tables found.").
-					SetTextColor(tview.Styles.PrimaryTextColor))
-			} else {
-				tables = tableInfos
-				for i, t := range tableInfos {
-					table.SetCell(i+1, 0, tview.NewTableCell(t.Name).SetTextColor(tview.Styles.PrimaryTextColor))
-					table.SetCell(i+1, 1, tview.NewTableCell(t.Status).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignCenter))
-					table.SetCell(i+1, 2, tview.NewTableCell(formatWithCommas(t.ItemCount)).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignRight))
-					table.SetCell(i+1, 3, tview.NewTableCell(formatBytes(t.SizeBytes)).SetTextColor(tview.Styles.PrimaryTextColor).SetAlign(tview.AlignRight))
+			table.ScrollToBeginning()
+		}
+	}
+	
+	// Filter input change handler
+	filterInput.SetChangedFunc(func(text string) {
+		if text == "" {
+			filteredTables = tables
+		} else {
+			filteredTables = []aws.TableInfo{}
+			lowerText := strings.ToLower(text)
+			for _, t := range tables {
+				if strings.Contains(strings.ToLower(t.Name), lowerText) {
+					filteredTables = append(filteredTables, t)
 				}
-				table.ScrollToBeginning()
 			}
-		})
-	}()
-
+		}
+		populateTable(filteredTables)
+	})
+	
+	// Set input capture for filter
+	filterInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyESC {
+			if filterInput.GetText() != "" {
+				filterInput.SetText("")
+			}
+			app.SetFocus(table)
+			return nil
+		} else if event.Key() == tcell.KeyDown || event.Key() == tcell.KeyEnter {
+			app.SetFocus(table)
+			return nil
+		}
+		return event
+	})
+	
 	// Set input capture
 	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyESC || event.Rune() == 'q' {
@@ -335,14 +366,42 @@ func main() {
 			return nil
 		} else if event.Key() == tcell.KeyEnter {
 			row, _ := table.GetSelection()
-			if row > 0 && row <= len(tables) {
-				selectedTable := tables[row-1]
+			currentTables := filteredTables
+			if len(currentTables) == 0 {
+				currentTables = tables
+			}
+			if row > 0 && row <= len(currentTables) {
+				selectedTable := currentTables[row-1]
 				createTableActionPage(pages, app, selectedTable, client)
 				pages.SwitchToPage("tableaction")
 			}
+		} else if event.Rune() != 0 && event.Key() != tcell.KeyEnter {
+			// Start typing - switch to filter
+			filterInput.SetText(string(event.Rune()))
+			app.SetFocus(filterInput)
+			return nil
 		}
 		return event
 	})
+
+	// Load tables asynchronously
+	go func() {
+		tableInfos, err := client.ListTables()
+		app.QueueUpdateDraw(func() {
+			// Switch from loading screen to table list
+			pages.SwitchToPage("tablelist")
+
+			if err != nil {
+				table.Clear()
+				table.SetCell(0, 0, tview.NewTableCell(fmt.Sprintf("Error: %v", err)).
+					SetTextColor(tview.Styles.PrimaryTextColor))
+			} else {
+				tables = tableInfos
+				filteredTables = tableInfos
+				populateTable(filteredTables)
+			}
+		})
+	}()
 
 	// Set root to pages
 	app.SetRoot(pages, true).SetFocus(table)
