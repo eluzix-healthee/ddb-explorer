@@ -5,6 +5,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - Add a tiny compile-time anchor file (for example, `tui/deps.go`) when introducing migration dependencies before feature code exists; this keeps modules in `go.mod` after `go mod tidy`.
 - For Bubble Tea migration work, keep state transitions in `tui/app.go` and keep rendering logic split across `tui/views.go` + `tui/components.go` to avoid another monolithic UI file.
 - Keep reusable color tokens and lipgloss theme definitions in `tui/styles`; view/component code should consume styles through the model-owned theme instead of creating ad-hoc styles.
+- Keep keyboard hints generated from `key.Binding` metadata (`Binding.Help()`) so help text stays in sync with keymap changes.
 
 ---
 
@@ -41,4 +42,16 @@ Thread: https://ampcode.com/threads/T-019cb883-e385-766c-82c3-192b425781bc
   - Keep the TUI style source-of-truth inside `tui/styles` and inject the theme via the root model so all views stay visually consistent.
   - A small exported theme struct is enough to share style primitives across views without introducing circular imports.
   - After moving files into a subpackage, run `gofmt` and `go test ./...` to quickly catch stale references from package-scoped renames.
+---
+
+## 2026-03-04 13:10:13 IST - US-004
+Thread: https://ampcode.com/threads/T-019cb886-a1b4-77c1-b324-41287714150a
+- Centralized keyboard configuration into feature-scoped keymaps (`Global`, `TableList`, `Query`, `Scan`) and updated the model to consume global + table-list bindings through a single source.
+- Added typed Bubble Tea messages for table loading, query, and scan success/error paths, and switched startup wiring to a `loadTablesCmd` command that returns those typed messages.
+- Replaced hardcoded help footer text with keymap-derived hints and updated the tables screen to reflect loaded table count from model state.
+- Files changed: `tui/keys.go`, `tui/messages.go`, `tui/app.go`, `tui/components.go`, `tui/views.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep placeholder view actions wired to future story IDs in status text; it preserves explicit transitions without implementing partial UI flows.
+  - Prefer a small error normalization helper for typed failure messages so nil-error edge cases never leak ambiguous UI state.
+  - When using Bubble Tea key bindings, `Binding.Help()` returns a struct (`key.Help`), not `(key, desc)` tuple values.
 ---

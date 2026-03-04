@@ -26,6 +26,7 @@ type Model struct {
 	width   int
 	height  int
 	state   viewState
+	tables  []aws.TableInfo
 	status  string
 	err     error
 
@@ -47,7 +48,7 @@ func NewModel(profile string, client *aws.Client) Model {
 		width:   80,
 		height:  24,
 		state:   viewStateLoading,
-		status:  "connecting to AWS",
+		status:  "loading DynamoDB tables",
 		spinner: spin,
 		keys:    defaultKeyMap(),
 		theme:   theme,
@@ -59,7 +60,7 @@ func NewProgram(model Model) *tea.Program {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, testConnectionCmd(m.client))
+	return tea.Batch(m.spinner.Tick, loadTablesCmd(m.client))
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -69,31 +70,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
-		if key.Matches(msg, m.keys.Quit) {
+		if key.Matches(msg, m.keys.Global.Quit) {
 			return m, tea.Quit
 		}
-		if key.Matches(msg, m.keys.Help) {
+		if key.Matches(msg, m.keys.Global.Help) {
 			m.showHelp = !m.showHelp
 			return m, nil
 		}
-		if key.Matches(msg, m.keys.Back) {
+		if key.Matches(msg, m.keys.Global.Back) {
+			if m.state == viewStateError && len(m.tables) > 0 {
+				m.state = viewStateTables
+				m.status = "returned to table list"
+				m.err = nil
+				return m, nil
+			}
 			m.status = "already at root view"
 			return m, nil
 		}
+
+		if m.state == viewStateTables {
+			if key.Matches(msg, m.keys.TableList.Refresh) {
+				m.state = viewStateLoading
+				m.status = "refreshing table list"
+				return m, loadTablesCmd(m.client)
+			}
+			if key.Matches(msg, m.keys.TableList.Open) {
+				m.status = "query and scan forms are coming in US-007"
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.TableList.Filter) {
+				m.status = "table filtering is coming in US-006"
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.TableList.MoveUp) || key.Matches(msg, m.keys.TableList.MoveDown) {
+				m.status = "table navigation is coming in US-006"
+				return m, nil
+			}
+		}
+	case tableLoadSuccessMsg:
+		m.tables = msg.tables
+		m.state = viewStateTables
+		m.status = fmt.Sprintf("loaded %d tables with profile %s", len(msg.tables), m.profile)
+		m.err = nil
+		return m, nil
+	case tableLoadErrorMsg:
+		m.state = viewStateError
+		m.status = "failed to load tables"
+		m.err = normalizeError(msg.err, "table load failed")
+		return m, nil
+	case querySuccessMsg:
+		m.status = fmt.Sprintf("query returned %d items from %s", len(msg.result.Items), msg.tableName)
+		m.err = nil
+		return m, nil
+	case queryErrorMsg:
+		m.status = fmt.Sprintf("query failed for %s", msg.tableName)
+		m.err = normalizeError(msg.err, "query failed")
+		return m, nil
+	case scanSuccessMsg:
+		m.status = fmt.Sprintf("scan returned %d items from %s", len(msg.result.Items), msg.tableName)
+		m.err = nil
+		return m, nil
+	case scanErrorMsg:
+		m.status = fmt.Sprintf("scan failed for %s", msg.tableName)
+		m.err = normalizeError(msg.err, "scan failed")
+		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-	case connectionReadyMsg:
-		m.state = viewStateTables
-		m.status = fmt.Sprintf("connected with profile %s", m.profile)
-		m.err = nil
-		return m, nil
-	case connectionFailedMsg:
-		m.state = viewStateError
-		m.status = "failed to connect"
-		m.err = msg.err
-		return m, nil
 	}
 
 	return m, nil
@@ -119,14 +163,25 @@ func (m Model) View() string {
 	return m.renderChrome(content)
 }
 
-func testConnectionCmd(client *aws.Client) tea.Cmd {
+func loadTablesCmd(client *aws.Client) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
-			return connectionFailedMsg{err: errors.New("aws client is nil")}
+			return tableLoadErrorMsg{err: errors.New("aws client is nil")}
 		}
-		if err := client.TestConnection(); err != nil {
-			return connectionFailedMsg{err: err}
+
+		tables, err := client.ListTables()
+		if err != nil {
+			return tableLoadErrorMsg{err: err}
 		}
-		return connectionReadyMsg{}
+
+		return tableLoadSuccessMsg{tables: tables}
 	}
+}
+
+func normalizeError(err error, fallback string) error {
+	if err != nil {
+		return err
+	}
+
+	return errors.New(fallback)
 }

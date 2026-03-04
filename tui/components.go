@@ -16,6 +16,11 @@ func (m Model) renderChrome(content string) string {
 }
 
 func (m Model) withHelp(content string) string {
-	help := m.theme.Help.Render("q: quit • esc: back • ctrl+h: toggle help")
+	helpText := m.keys.HelpText(m.state)
+	if helpText == "" {
+		helpText = "No shortcuts available"
+	}
+
+	help := m.theme.Help.Render(helpText)
 	return lipgloss.JoinVertical(lipgloss.Left, content, "", help)
 }

@@ -19,14 +19,19 @@ func (m Model) loadingView() string {
 }
 
 func (m Model) tablesView() string {
+	statusText := fmt.Sprintf("Loaded %d tables.", len(m.tables))
+	if len(m.tables) == 0 {
+		statusText = "No tables discovered for this profile."
+	}
+
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.theme.Title.Render("DDB Explorer"),
 		"",
-		m.theme.Success.Render("Bubble Tea app skeleton is running."),
+		m.theme.Success.Render(statusText),
 		m.theme.Body.Render("Table list/query views will be added in upcoming stories."),
 		"",
-		m.theme.Hint.Render("Global controls are already wired."),
+		m.theme.Hint.Render("Press ctrl+h to see global and table-list key bindings."),
 	)
 	return m.theme.Panel.Render(body)
 }
