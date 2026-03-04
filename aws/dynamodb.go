@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,10 +21,12 @@ type Client struct {
 
 // NewClient creates a new DynamoDB client with the given profile
 func NewClient(profile string) (*Client, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithSharedConfigProfile(profile),
-		config.WithRegion("us-east-1"), // TODO: make configurable
-	)
+	loadOptions := []func(*config.LoadOptions) error{config.WithSharedConfigProfile(profile)}
+	if region := strings.TrimSpace(os.Getenv("DDB_EXPLORER_REGION")); region != "" {
+		loadOptions = append(loadOptions, config.WithRegion(region))
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.Background(), loadOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config with profile %s: %w", profile, err)
 	}
@@ -34,7 +37,12 @@ func NewClient(profile string) (*Client, error) {
 
 // TestConnection tests the connection by listing tables
 func (c *Client) TestConnection() error {
-	_, err := c.svc.ListTables(context.TODO(), &dynamodb.ListTablesInput{})
+	return c.TestConnectionContext(context.Background())
+}
+
+// TestConnectionContext tests the connection by listing tables with explicit cancellation support.
+func (c *Client) TestConnectionContext(ctx context.Context) error {
+	_, err := c.svc.ListTables(ctx, &dynamodb.ListTablesInput{})
 	if err != nil {
 		return fmt.Errorf("failed to list tables: %w", err)
 	}
@@ -61,14 +69,19 @@ type IndexKeyInfo struct {
 
 // ListTables returns a list of table info
 func (c *Client) ListTables() ([]TableInfo, error) {
-	result, err := c.svc.ListTables(context.TODO(), &dynamodb.ListTablesInput{})
+	return c.ListTablesContext(context.Background())
+}
+
+// ListTablesContext returns a list of table info with explicit cancellation support.
+func (c *Client) ListTablesContext(ctx context.Context) ([]TableInfo, error) {
+	result, err := c.svc.ListTables(ctx, &dynamodb.ListTablesInput{})
 	if err != nil {
 		return nil, err
 	}
 
 	var tables []TableInfo
 	for _, name := range result.TableNames {
-		info, err := c.getTableInfo(name)
+		info, err := c.getTableInfo(ctx, name)
 		if err != nil {
 			// Skip tables with errors, or return partial
 			continue
@@ -180,7 +193,59 @@ func formatAttributeValue(v types.AttributeValue) string {
 	}
 }
 
+func convertExclusiveStartKey(exclusiveStartKey map[string]interface{}) map[string]types.AttributeValue {
+	if exclusiveStartKey == nil {
+		return nil
+	}
+
+	converted := make(map[string]types.AttributeValue, len(exclusiveStartKey))
+	for k, v := range exclusiveStartKey {
+		switch val := v.(type) {
+		case string:
+			converted[k] = &types.AttributeValueMemberS{Value: val}
+		case int64:
+			converted[k] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
+		}
+	}
+
+	return converted
+}
+
+func convertResultItems(items []map[string]types.AttributeValue) ([]map[string]interface{}, []map[string]interface{}) {
+	formattedItems := make([]map[string]interface{}, len(items))
+	rawItems := make([]map[string]interface{}, len(items))
+	for i, item := range items {
+		formattedItems[i] = make(map[string]interface{}, len(item))
+		rawItems[i] = make(map[string]interface{}, len(item))
+		for k, v := range item {
+			formattedItems[i][k] = formatAttributeValue(v)
+			rawItems[i][k] = attributeValueToInterface(v)
+		}
+	}
+
+	return formattedItems, rawItems
+}
+
+func convertLastEvaluatedKey(lastEvaluatedKey map[string]types.AttributeValue) map[string]interface{} {
+	if lastEvaluatedKey == nil {
+		return nil
+	}
+
+	converted := make(map[string]interface{}, len(lastEvaluatedKey))
+	for k, v := range lastEvaluatedKey {
+		converted[k] = formatAttributeValue(v)
+	}
+
+	return converted
+}
+
+// Query preserves the original API and runs a sort-key query without a second bound value.
 func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortValue, condition, indexName string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
+	return c.QueryContext(context.Background(), tableName, partitionKey, partitionValue, sortKey, sortValue, "", condition, indexName, exclusiveStartKey)
+}
+
+// QueryContext executes a query with explicit cancellation support.
+func (c *Client) QueryContext(ctx context.Context, tableName, partitionKey, partitionValue, sortKey, sortValue, sortValueEnd, condition, indexName string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
 	limit := int32(15) // Load batch of 15 items
 	input := &dynamodb.QueryInput{
 		TableName:              &tableName,
@@ -197,19 +262,8 @@ func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortVal
 		input.IndexName = aws.String(indexName)
 	}
 
-	if exclusiveStartKey != nil {
-		// Convert map to AttributeValue map
-		exclKey := make(map[string]types.AttributeValue)
-		for k, v := range exclusiveStartKey {
-			switch val := v.(type) {
-			case string:
-				exclKey[k] = &types.AttributeValueMemberS{Value: val}
-			case int64:
-				exclKey[k] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
-				// Add more types if needed
-			}
-		}
-		input.ExclusiveStartKey = exclKey
+	if convertedStartKey := convertExclusiveStartKey(exclusiveStartKey); convertedStartKey != nil {
+		input.ExclusiveStartKey = convertedStartKey
 	}
 
 	if sortKey != "" && sortValue != "" {
@@ -228,97 +282,54 @@ func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortVal
 		case ">=":
 			input.KeyConditionExpression = aws.String("#pk = :pk AND #sk >= :sk")
 		case "between":
-			// For between, need two values, but for now assume single
 			input.KeyConditionExpression = aws.String("#pk = :pk AND #sk BETWEEN :sk AND :sk2")
-			// TODO: handle between properly
+			input.ExpressionAttributeValues[":sk2"] = &types.AttributeValueMemberS{Value: sortValueEnd}
 		}
 		input.ExpressionAttributeNames["#sk"] = sortKey
 		input.ExpressionAttributeValues[":sk"] = &types.AttributeValueMemberS{Value: sortValue}
 	}
 
-	result, err := c.svc.Query(context.TODO(), input)
+	result, err := c.svc.Query(ctx, input)
 	if err != nil {
 		return QueryResult{}, err
 	}
 
-	// Convert items (formatted strings for display)
-	items := make([]map[string]interface{}, len(result.Items))
-	rawItems := make([]map[string]interface{}, len(result.Items))
-	for i, item := range result.Items {
-		items[i] = make(map[string]interface{})
-		rawItems[i] = make(map[string]interface{})
-		for k, v := range item {
-			items[i][k] = formatAttributeValue(v)
-			rawItems[i][k] = attributeValueToInterface(v)
-		}
-	}
-
-	// Convert LastEvaluatedKey
-	var lastKey map[string]interface{}
-	if result.LastEvaluatedKey != nil {
-		lastKey = make(map[string]interface{})
-		for k, v := range result.LastEvaluatedKey {
-			lastKey[k] = formatAttributeValue(v)
-		}
-	}
+	items, rawItems := convertResultItems(result.Items)
+	lastKey := convertLastEvaluatedKey(result.LastEvaluatedKey)
 
 	return QueryResult{Items: items, RawItems: rawItems, LastEvaluatedKey: lastKey}, nil
 }
 
 // Scan executes a scan on the table
 func (c *Client) Scan(tableName string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
+	return c.ScanContext(context.Background(), tableName, exclusiveStartKey)
+}
+
+// ScanContext executes a scan with explicit cancellation support.
+func (c *Client) ScanContext(ctx context.Context, tableName string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
 	limit := int32(15) // Load batch of 15 items
 	input := &dynamodb.ScanInput{
 		TableName: &tableName,
 		Limit:     &limit,
 	}
 
-	if exclusiveStartKey != nil {
-		// Convert map to AttributeValue map
-		exclKey := make(map[string]types.AttributeValue)
-		for k, v := range exclusiveStartKey {
-			switch val := v.(type) {
-			case string:
-				exclKey[k] = &types.AttributeValueMemberS{Value: val}
-			case int64:
-				exclKey[k] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
-				// Add more types if needed
-			}
-		}
-		input.ExclusiveStartKey = exclKey
+	if convertedStartKey := convertExclusiveStartKey(exclusiveStartKey); convertedStartKey != nil {
+		input.ExclusiveStartKey = convertedStartKey
 	}
 
-	result, err := c.svc.Scan(context.TODO(), input)
+	result, err := c.svc.Scan(ctx, input)
 	if err != nil {
 		return QueryResult{}, err
 	}
 
-	// Convert items (formatted strings for display)
-	items := make([]map[string]interface{}, len(result.Items))
-	rawItems := make([]map[string]interface{}, len(result.Items))
-	for i, item := range result.Items {
-		items[i] = make(map[string]interface{})
-		rawItems[i] = make(map[string]interface{})
-		for k, v := range item {
-			items[i][k] = formatAttributeValue(v)
-			rawItems[i][k] = attributeValueToInterface(v)
-		}
-	}
-
-	// Convert LastEvaluatedKey
-	var lastKey map[string]interface{}
-	if result.LastEvaluatedKey != nil {
-		lastKey = make(map[string]interface{})
-		for k, v := range result.LastEvaluatedKey {
-			lastKey[k] = formatAttributeValue(v)
-		}
-	}
+	items, rawItems := convertResultItems(result.Items)
+	lastKey := convertLastEvaluatedKey(result.LastEvaluatedKey)
 
 	return QueryResult{Items: items, RawItems: rawItems, LastEvaluatedKey: lastKey}, nil
 }
 
-func (c *Client) getTableInfo(name string) (TableInfo, error) {
-	result, err := c.svc.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
+func (c *Client) getTableInfo(ctx context.Context, name string) (TableInfo, error) {
+	result, err := c.svc.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: &name,
 	})
 	if err != nil {

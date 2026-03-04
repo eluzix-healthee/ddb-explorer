@@ -129,6 +129,59 @@ func TestQueryRunRequiresExplicitActionFocus(t *testing.T) {
 	}
 }
 
+func TestBetweenConditionShowsEndValueInput(t *testing.T) {
+	m := loadTablesForTest(t)
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := m.queryInputCount(); got != 3 {
+		t.Fatalf("expected 3 query inputs for default condition, got %d", got)
+	}
+
+	m.queryFocus = queryFieldSortCondition
+	for m.queryFields[queryFieldSortCondition].value != "between" {
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+
+	if got := m.queryInputCount(); got != 4 {
+		t.Fatalf("expected 4 query inputs for between condition, got %d", got)
+	}
+
+	view := m.queryView()
+	if !strings.Contains(view, "Value (End)") {
+		t.Fatalf("expected between condition to render end value input, got %q", view)
+	}
+}
+
+func TestBuildQueryRequestRequiresBetweenEndValue(t *testing.T) {
+	m := loadTablesForTest(t)
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m.queryFields[queryFieldPartitionValue].value = "acc-1"
+	m.queryFields[queryFieldSortCondition].value = "between"
+	m.queryFields[queryFieldSortValue].value = "2026-01-01"
+	m.queryFields[queryFieldSortValueEnd].value = ""
+
+	_, err := m.buildQueryRequest()
+	if err == nil {
+		t.Fatal("expected buildQueryRequest to fail when between end value is missing")
+	}
+	if !strings.Contains(err.Error(), "end value") {
+		t.Fatalf("expected between validation error, got %v", err)
+	}
+
+	m.queryFields[queryFieldSortValueEnd].value = "2026-01-31"
+	request, err := m.buildQueryRequest()
+	if err != nil {
+		t.Fatalf("expected valid between request, got %v", err)
+	}
+	if request.condition != "between" {
+		t.Fatalf("expected between condition, got %q", request.condition)
+	}
+	if request.sortValue != "2026-01-01" || request.sortValueEnd != "2026-01-31" {
+		t.Fatalf("expected both between bounds, got start=%q end=%q", request.sortValue, request.sortValueEnd)
+	}
+}
+
 func TestScanRunUsesExplicitTrigger(t *testing.T) {
 	m := loadTablesForTest(t)
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})

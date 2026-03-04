@@ -212,8 +212,22 @@ func (m Model) jsonModalView() string {
 	}
 
 	rendered := make([]string, 0, end-start)
+	activeMatchLine := -1
+	if m.jsonSearchCurrent >= 0 && m.jsonSearchCurrent < len(m.jsonSearchMatches) {
+		activeMatchLine = m.jsonSearchMatches[m.jsonSearchCurrent]
+	}
+	matchStyle := m.theme.Highlight.Underline(true).Background(lipgloss.Color("238"))
+	activeMatchStyle := m.theme.Highlight.Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("220"))
 	for idx := start; idx < end; idx++ {
-		rendered = append(rendered, truncateRunes(m.jsonModalLines[idx], lineWidth))
+		line := truncateRunes(m.jsonModalLines[idx], lineWidth)
+		if m.jsonSearchQuery != "" {
+			lineStyle := matchStyle
+			if idx == activeMatchLine {
+				lineStyle = activeMatchStyle
+			}
+			line = highlightJSONSearchTerm(line, m.jsonSearchQuery, lineStyle)
+		}
+		rendered = append(rendered, line)
 	}
 	if len(rendered) == 0 {
 		rendered = append(rendered, "{}")
@@ -601,6 +615,59 @@ func wrapRunes(value string, limit int) []string {
 	}
 
 	return wrapped
+}
+
+func highlightJSONSearchTerm(line, query string, style lipgloss.Style) string {
+	trimmedQuery := strings.TrimSpace(query)
+	if line == "" || trimmedQuery == "" {
+		return line
+	}
+
+	ranges := jsonSearchMatchRanges(line, trimmedQuery)
+	if len(ranges) == 0 {
+		return line
+	}
+
+	var builder strings.Builder
+	start := 0
+	for _, matchRange := range ranges {
+		matchStart := matchRange[0]
+		matchEnd := matchRange[1]
+		builder.WriteString(line[start:matchStart])
+		builder.WriteString(style.Render(line[matchStart:matchEnd]))
+		start = matchEnd
+	}
+	builder.WriteString(line[start:])
+
+	return builder.String()
+}
+
+func jsonSearchMatchRanges(line, query string) [][2]int {
+	if line == "" || query == "" {
+		return nil
+	}
+
+	lowerLine := strings.ToLower(line)
+	lowerQuery := strings.ToLower(query)
+	queryLength := len(query)
+	start := 0
+	ranges := make([][2]int, 0, 4)
+	for start < len(line) {
+		matchOffset := strings.Index(lowerLine[start:], lowerQuery)
+		if matchOffset < 0 {
+			break
+		}
+
+		matchStart := start + matchOffset
+		matchEnd := matchStart + queryLength
+		if matchEnd > len(line) {
+			break
+		}
+		ranges = append(ranges, [2]int{matchStart, matchEnd})
+		start = matchEnd
+	}
+
+	return ranges
 }
 
 func formatBytes(sizeBytes int64) string {

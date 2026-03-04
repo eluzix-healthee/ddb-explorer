@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/bubbles/key"
 )
 
@@ -188,10 +186,6 @@ func defaultKeyMap() KeyMap {
 			),
 		},
 	}
-}
-
-func (k KeyMap) HelpText(state viewState) string {
-	return strings.Join(k.HelpLines(state), " | ")
 }
 
 func (k KeyMap) HelpLines(state viewState) []string {

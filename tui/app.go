@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,7 @@ const (
 	queryFieldPartitionValue = iota
 	queryFieldSortCondition
 	queryFieldSortValue
+	queryFieldSortValueEnd
 )
 
 var querySortKeyConditions = []string{"=", "begins_with", "<", "<=", ">", ">=", "between"}
@@ -92,6 +94,7 @@ type queryRequest struct {
 	sortKey        string
 	condition      string
 	sortValue      string
+	sortValueEnd   string
 	indexName      string
 }
 
@@ -164,14 +167,10 @@ func NewModel(profile string, client *aws.Client) Model {
 		status:                    "loading DynamoDB tables",
 		nextRequestID:             1,
 		pendingTableLoadRequestID: 1,
-		queryFields: []queryField{
-			{label: "Partition Key Value", placeholder: "required value", required: true},
-			{label: "Sort Key Condition", value: querySortKeyConditions[0], placeholder: "=, begins_with, <, <=, >, >=, between"},
-			{label: "Sort Key Value", placeholder: "optional"},
-		},
-		spinner: spin,
-		keys:    defaultKeyMap(),
-		theme:   theme,
+		queryFields:               defaultQueryFields(),
+		spinner:                   spin,
+		keys:                      defaultKeyMap(),
+		theme:                     theme,
 	}
 }
 
@@ -872,22 +871,7 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) error {
 	m.jsonModalScroll = 0
 	m.queryTargets = buildQueryTargets(table)
 	m.selectedQueryTarget = 0
-	m.queryFields = []queryField{
-		{
-			label:       "Partition Key Value",
-			placeholder: "required value",
-			required:    true,
-		},
-		{
-			label:       "Sort Key Condition",
-			value:       querySortKeyConditions[0],
-			placeholder: "=, begins_with, <, <=, >, >=, between",
-		},
-		{
-			label:       "Sort Key Value",
-			placeholder: "optional",
-		},
-	}
+	m.queryFields = defaultQueryFields()
 	m.refreshQueryFieldLabels()
 	m.queryFocus = 0
 
@@ -1228,7 +1212,7 @@ func (m *Model) cycleQueryTarget(delta int) bool {
 
 func (m *Model) refreshQueryFieldLabels() {
 	target, ok := m.currentQueryTarget()
-	if !ok || len(m.queryFields) <= queryFieldSortValue {
+	if !ok || len(m.queryFields) <= queryFieldSortValueEnd {
 		return
 	}
 
@@ -1240,12 +1224,21 @@ func (m *Model) refreshQueryFieldLabels() {
 		m.queryFields[queryFieldSortValue].label = "Sort Key Value"
 		m.queryFields[queryFieldSortValue].placeholder = "selected source has no sort key"
 		m.queryFields[queryFieldSortValue].value = ""
+		m.queryFields[queryFieldSortValueEnd].label = "Sort Key Value (End)"
+		m.queryFields[queryFieldSortValueEnd].placeholder = "selected source has no sort key"
+		m.queryFields[queryFieldSortValueEnd].value = ""
 		return
 	}
 
 	m.queryFields[queryFieldSortCondition].label = fmt.Sprintf("%s Condition", target.sortKey)
 	m.queryFields[queryFieldSortValue].label = fmt.Sprintf("%s Value", target.sortKey)
 	m.queryFields[queryFieldSortValue].placeholder = fmt.Sprintf("optional value for %s", target.sortKey)
+	m.queryFields[queryFieldSortValueEnd].label = fmt.Sprintf("%s Value (End)", target.sortKey)
+	m.queryFields[queryFieldSortValueEnd].placeholder = fmt.Sprintf("required end value for %s when condition is between", target.sortKey)
+
+	if m.queryFields[queryFieldSortCondition].value != "between" {
+		m.queryFields[queryFieldSortValueEnd].value = ""
+	}
 }
 
 func (m Model) queryInputCount() int {
@@ -1256,8 +1249,14 @@ func (m Model) queryInputCount() int {
 	if target.sortKey == "" {
 		return 1
 	}
+	if len(m.queryFields) <= queryFieldSortValueEnd {
+		return len(m.queryFields)
+	}
+	if strings.TrimSpace(m.queryFields[queryFieldSortCondition].value) == "between" {
+		return queryFieldSortValueEnd + 1
+	}
 
-	return len(m.queryFields)
+	return queryFieldSortValue + 1
 }
 
 func sortConditionIndex(condition string) int {
@@ -1299,6 +1298,12 @@ func (m *Model) cycleSortCondition(delta int) {
 	}
 
 	m.queryFields[queryFieldSortCondition].value = querySortKeyConditions[next]
+	if m.queryFields[queryFieldSortCondition].value != "between" && len(m.queryFields) > queryFieldSortValueEnd {
+		m.queryFields[queryFieldSortValueEnd].value = ""
+	}
+	if m.queryFocus > m.queryInputCount() {
+		m.queryFocus = m.queryInputCount()
+	}
 }
 
 func (m *Model) openSelectedResultDetail() error {
@@ -1699,6 +1704,7 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 		sortKey:        strings.TrimSpace(target.sortKey),
 		condition:      strings.TrimSpace(m.queryFields[queryFieldSortCondition].value),
 		sortValue:      strings.TrimSpace(m.queryFields[queryFieldSortValue].value),
+		sortValueEnd:   strings.TrimSpace(m.queryFields[queryFieldSortValueEnd].value),
 		indexName:      strings.TrimSpace(target.indexName),
 	}
 
@@ -1711,12 +1717,14 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 
 	if request.sortKey == "" {
 		request.sortValue = ""
+		request.sortValueEnd = ""
 		request.condition = querySortKeyConditions[0]
 		return request, nil
 	}
 
 	if strings.TrimSpace(request.sortValue) == "" {
 		request.sortValue = ""
+		request.sortValueEnd = ""
 		request.condition = querySortKeyConditions[0]
 		request.sortKey = ""
 		return request, nil
@@ -1724,6 +1732,14 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 	if !isValidSortCondition(request.condition) {
 		return queryRequest{}, fmt.Errorf("invalid sort key condition %q", request.condition)
 	}
+	if request.condition == "between" {
+		if request.sortValueEnd == "" {
+			return queryRequest{}, errors.New("sort key end value is required for between")
+		}
+		return request, nil
+	}
+
+	request.sortValueEnd = ""
 
 	return request, nil
 }
@@ -1734,12 +1750,14 @@ func runQueryCmd(client *aws.Client, request queryRequest, requestID uint64) tea
 			return queryErrorMsg{requestID: requestID, tableName: request.tableName, err: errors.New("aws client is nil")}
 		}
 
-		result, err := client.Query(
+		result, err := client.QueryContext(
+			context.Background(),
 			request.tableName,
 			request.partitionKey,
 			request.partitionValue,
 			request.sortKey,
 			request.sortValue,
+			request.sortValueEnd,
 			request.condition,
 			request.indexName,
 			nil,
@@ -1758,11 +1776,20 @@ func runScanCmd(client *aws.Client, tableName string, requestID uint64) tea.Cmd 
 			return scanErrorMsg{requestID: requestID, tableName: tableName, err: errors.New("aws client is nil")}
 		}
 
-		result, err := client.Scan(tableName, nil)
+		result, err := client.ScanContext(context.Background(), tableName, nil)
 		if err != nil {
 			return scanErrorMsg{requestID: requestID, tableName: tableName, err: err}
 		}
 
 		return scanSuccessMsg{requestID: requestID, tableName: tableName, result: result}
+	}
+}
+
+func defaultQueryFields() []queryField {
+	return []queryField{
+		{label: "Partition Key Value", placeholder: "required value", required: true},
+		{label: "Sort Key Condition", value: querySortKeyConditions[0], placeholder: "=, begins_with, <, <=, >, >=, between"},
+		{label: "Sort Key Value", placeholder: "optional"},
+		{label: "Sort Key Value (End)", placeholder: "required when condition is between"},
 	}
 }

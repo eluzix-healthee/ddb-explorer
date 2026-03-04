@@ -303,3 +303,18 @@ func TestJSONModalSearchFindsAndFocusesMatch(t *testing.T) {
 		t.Fatalf("expected JSON match status, got %q", m.status)
 	}
 }
+
+func TestJSONSearchMatchRangesFindsAllMatchesCaseInsensitive(t *testing.T) {
+	line := "prefix Needle middle needle suffix"
+	ranges := jsonSearchMatchRanges(line, "needle")
+
+	if len(ranges) != 2 {
+		t.Fatalf("expected two match ranges, got %d", len(ranges))
+	}
+	if got := line[ranges[0][0]:ranges[0][1]]; got != "Needle" {
+		t.Fatalf("expected first match to preserve source casing, got %q", got)
+	}
+	if got := line[ranges[1][0]:ranges[1][1]]; got != "needle" {
+		t.Fatalf("expected second match to preserve source casing, got %q", got)
+	}
+}
