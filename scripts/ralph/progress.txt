@@ -3,6 +3,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 
 ## Codebase Patterns
 - Add a tiny compile-time anchor file (for example, `tui/deps.go`) when introducing migration dependencies before feature code exists; this keeps modules in `go.mod` after `go mod tidy`.
+- For Bubble Tea migration work, keep state transitions in `tui/app.go` and keep rendering logic split across `tui/views.go` + `tui/components.go` to avoid another monolithic UI file.
 
 ---
 
@@ -15,4 +16,16 @@ Thread: https://ampcode.com/threads/T-019cb87d-a157-7778-89d7-8351b2fb8b22
   - `go mod tidy` removes unused migration dependencies unless they are imported by module code.
   - `go test ./...` and `go build ./...` are fast safety checks for compile health in this repo.
   - Keeping migration dependencies isolated in `tui/deps.go` avoids touching legacy `main.go` before the full Bubble Tea transition.
+---
+
+## 2026-03-04 13:02:05 IST - US-002
+Thread: https://ampcode.com/threads/T-019cb880-8185-70d8-839b-f5df6df6f426
+- Replaced the monolithic tview startup in `main.go` with startup-only Bubble Tea wiring (flags, profile validation, AWS client init, and `tea.Program` launch).
+- Added modular Bubble Tea package files: `tui/app.go`, `tui/views.go`, `tui/components.go`, `tui/styles.go`, `tui/keys.go`, and `tui/messages.go`.
+- Implemented a compile-safe app skeleton with explicit view state, typed connection messages, centralized key map, shared styles, and centered chrome layout.
+- Files changed: `main.go`, `go.mod`, `go.sum`, `tui/app.go`, `tui/views.go`, `tui/components.go`, `tui/styles.go`, `tui/keys.go`, `tui/messages.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - `main.go` should stay as wiring-only entrypoint; new TUI behavior belongs in `tui/` to preserve modularity.
+  - Bubble Tea async startup checks are easiest to model as typed `tea.Msg` values returned from a `tea.Cmd` (`testConnectionCmd`).
+  - Centralized key/style/message files make follow-up stories (US-003/US-004) additive instead of requiring structural refactors.
 ---

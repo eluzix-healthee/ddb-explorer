@@ -26,7 +26,7 @@
       "dependencies": [
         "US-001"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",
