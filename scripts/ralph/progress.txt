@@ -12,6 +12,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - For Bubble Tea forms, treat the submit action as a virtual focus target at index `len(fields)` so `tab`/`shift+tab` navigation and explicit `enter` submission stay predictable.
 - When supporting optional DynamoDB index queries, only set `QueryInput.IndexName` when the form value is non-empty to preserve base-table query behavior.
 - For paginated Bubble Tea tables, keep selection as an absolute row index and derive the visible page from `selected/pageSize`; this keeps resize and page-jump behavior deterministic.
+- When rendering result detail + JSON modal, keep both display-safe rows (`result.Items`) and typed raw payloads (`result.RawItems`) in model state so table readability and raw inspection can evolve independently.
 
 ---
 
@@ -111,4 +112,17 @@ Thread: https://ampcode.com/threads/T-019cb899-a268-743d-b608-d8559f7185d6
   - Keep result table rendering tolerant of sparse fields by discovering columns from the union of item keys.
   - Compute visible columns from terminal width so narrow terminals gracefully degrade without wrapping into chrome.
   - Regression-test page movement with deterministic `height`-based page sizes to avoid flaky navigation assertions.
+---
+
+## 2026-03-04 13:37:12 IST - US-009
+Thread: https://ampcode.com/threads/T-019cb89e-7547-7312-aa80-7f20c575ed5c
+- Added a new `detail` view state and routed results-table Enter actions into item detail inspection with explicit back navigation to results.
+- Implemented a centered raw JSON modal from detail context with line/page scrolling (`↑/↓`, `j/k`, `n/p`) and close-on-Enter/Esc behavior.
+- Added detail rendering safeguards for long values by wrapping + bounded continuation rows so large fields remain readable without breaking layout.
+- Added regression tests for detail transition/rendering, JSON modal scrolling/close behavior, and resize-centered modal layout.
+- Files changed: `tui/app.go`, `tui/views.go`, `tui/keys.go`, `tui/detail_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep detail/modal navigation in the same state and let `esc` close modal first; this keeps back-stack behavior deterministic.
+  - Use `json.MarshalIndent` on raw DynamoDB payloads for modal rendering so nested structures stay readable while table cells remain compact.
+  - For long detail values, wrap by rune width and cap continuation lines to preserve panel stability in narrow terminals.
 ---

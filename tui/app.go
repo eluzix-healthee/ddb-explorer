@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -22,6 +23,7 @@ const (
 	viewStateQuery   viewState = "query"
 	viewStateScan    viewState = "scan"
 	viewStateResults viewState = "results"
+	viewStateDetail  viewState = "detail"
 	viewStateError   viewState = "error"
 )
 
@@ -66,11 +68,17 @@ type Model struct {
 	queryFields       []queryField
 	queryFocus        int
 	resultItems       []map[string]interface{}
+	resultRawItems    []map[string]interface{}
 	resultColumns     []string
 	resultSelected    int
 	resultPage        int
 	resultOrigin      viewState
 	resultHasMore     bool
+	detailSelected    int
+	detailScroll      int
+	jsonModalOpen     bool
+	jsonModalLines    []string
+	jsonModalScroll   int
 
 	showHelp bool
 	spinner  spinner.Model
@@ -118,6 +126,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.clampResultsViewport()
+		m.clampDetailViewport()
+		m.clampJSONModalViewport()
 		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Global.Quit) {
@@ -140,6 +150,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateScanKey(msg)
 		case viewStateResults:
 			return m.updateResultsKey(msg)
+		case viewStateDetail:
+			return m.updateDetailKey(msg)
 		}
 	case tableLoadSuccessMsg:
 		m.tables = msg.tables
@@ -200,6 +212,8 @@ func (m Model) View() string {
 		content = m.scanView()
 	case viewStateResults:
 		content = m.resultsView()
+	case viewStateDetail:
+		content = m.detailView()
 	case viewStateError:
 		content = m.errorView()
 	default:
@@ -255,6 +269,11 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 		m.status = "returned to table list"
 		return m, nil
 	case viewStateResults:
+		if m.jsonModalOpen {
+			m.jsonModalOpen = false
+			m.status = "closed JSON modal"
+			return m, nil
+		}
 		if m.resultOrigin == viewStateScan {
 			m.state = viewStateScan
 			m.status = "returned to scan form"
@@ -263,6 +282,15 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 
 		m.state = viewStateQuery
 		m.status = "returned to query form"
+		return m, nil
+	case viewStateDetail:
+		if m.jsonModalOpen {
+			m.jsonModalOpen = false
+			m.status = "closed JSON modal"
+			return m, nil
+		}
+		m.state = viewStateResults
+		m.status = "returned to results table"
 		return m, nil
 	case viewStateError:
 		if len(m.tables) > 0 {
@@ -402,7 +430,61 @@ func (m Model) updateResultsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.Results.Open) {
-		m.status = "item detail view arrives in US-009"
+		if err := m.openSelectedResultDetail(); err != nil {
+			m.status = err.Error()
+			m.err = err
+			return m, nil
+		}
+
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) updateDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.jsonModalOpen {
+		if key.Matches(msg, m.keys.Detail.OpenJSON) {
+			m.jsonModalOpen = false
+			m.status = "closed JSON modal"
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Detail.MoveUp) {
+			m.moveJSONModalScroll(-1)
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Detail.MoveDown) {
+			m.moveJSONModalScroll(1)
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Detail.NextPage) {
+			m.moveJSONModalScroll(m.jsonModalPageSize())
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Detail.PrevPage) {
+			m.moveJSONModalScroll(-m.jsonModalPageSize())
+			return m, nil
+		}
+
+		return m, nil
+	}
+
+	if key.Matches(msg, m.keys.Detail.MoveUp) {
+		m.moveDetailSelection(-1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Detail.MoveDown) {
+		m.moveDetailSelection(1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Detail.OpenJSON) {
+		if err := m.openJSONModal(); err != nil {
+			m.status = err.Error()
+			m.err = err
+			return m, nil
+		}
+
+		m.err = nil
 		return m, nil
 	}
 
@@ -490,11 +572,17 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) {
 	m.state = viewStateQuery
 	m.activeTable = table.Name
 	m.resultItems = nil
+	m.resultRawItems = nil
 	m.resultColumns = nil
 	m.resultSelected = 0
 	m.resultPage = 0
 	m.resultOrigin = ""
 	m.resultHasMore = false
+	m.detailSelected = 0
+	m.detailScroll = 0
+	m.jsonModalOpen = false
+	m.jsonModalLines = nil
+	m.jsonModalScroll = 0
 	m.queryFields = []queryField{
 		{
 			label:       "Partition Key Name",
@@ -528,11 +616,22 @@ func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origi
 	m.state = viewStateResults
 	m.activeTable = tableName
 	m.resultItems = result.Items
+	if len(result.RawItems) == len(result.Items) {
+		m.resultRawItems = result.RawItems
+	} else {
+		m.resultRawItems = make([]map[string]interface{}, len(result.Items))
+		copy(m.resultRawItems, result.Items)
+	}
 	m.resultColumns = discoverResultColumns(result.Items)
 	m.resultSelected = 0
 	m.resultPage = 0
 	m.resultOrigin = origin
 	m.resultHasMore = len(result.LastEvaluatedKey) > 0
+	m.detailSelected = 0
+	m.detailScroll = 0
+	m.jsonModalOpen = false
+	m.jsonModalLines = nil
+	m.jsonModalScroll = 0
 	m.clampResultsViewport()
 }
 
@@ -713,6 +812,201 @@ func (m *Model) shiftQueryFocus(delta int) {
 	}
 
 	m.queryFocus = next
+}
+
+func (m *Model) openSelectedResultDetail() error {
+	if len(m.resultItems) == 0 {
+		return errors.New("no rows available")
+	}
+
+	if m.resultSelected < 0 {
+		m.resultSelected = 0
+	}
+	if m.resultSelected >= len(m.resultItems) {
+		m.resultSelected = len(m.resultItems) - 1
+	}
+
+	m.state = viewStateDetail
+	m.detailSelected = 0
+	m.detailScroll = 0
+	m.jsonModalOpen = false
+	m.jsonModalLines = nil
+	m.jsonModalScroll = 0
+	m.status = fmt.Sprintf("opened row %d detail", m.resultSelected+1)
+	return nil
+}
+
+func (m Model) selectedResultItems() (map[string]interface{}, map[string]interface{}, bool) {
+	if len(m.resultItems) == 0 {
+		return nil, nil, false
+	}
+
+	index := m.resultSelected
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(m.resultItems) {
+		index = len(m.resultItems) - 1
+	}
+
+	display := m.resultItems[index]
+	var raw map[string]interface{}
+	if index < len(m.resultRawItems) && m.resultRawItems[index] != nil {
+		raw = m.resultRawItems[index]
+	} else {
+		raw = display
+	}
+
+	return display, raw, true
+}
+
+func (m Model) selectedResultKeys() []string {
+	item, _, ok := m.selectedResultItems()
+	if !ok {
+		return nil
+	}
+
+	keys := make([]string, 0, len(item))
+	for key := range item {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (m Model) detailPageSize() int {
+	pageSize := m.height - 18
+	if pageSize < 3 {
+		return 3
+	}
+
+	return pageSize
+}
+
+func (m *Model) clampDetailViewport() {
+	keys := m.selectedResultKeys()
+	if len(keys) == 0 {
+		m.detailSelected = 0
+		m.detailScroll = 0
+		return
+	}
+
+	if m.detailSelected < 0 {
+		m.detailSelected = 0
+	}
+	if m.detailSelected >= len(keys) {
+		m.detailSelected = len(keys) - 1
+	}
+
+	pageSize := m.detailPageSize()
+	maxScroll := len(keys) - pageSize
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+
+	if m.detailSelected < m.detailScroll {
+		m.detailScroll = m.detailSelected
+	}
+	if m.detailSelected >= m.detailScroll+pageSize {
+		m.detailScroll = m.detailSelected - pageSize + 1
+	}
+
+	if m.detailScroll < 0 {
+		m.detailScroll = 0
+	}
+	if m.detailScroll > maxScroll {
+		m.detailScroll = maxScroll
+	}
+}
+
+func (m *Model) moveDetailSelection(delta int) {
+	keys := m.selectedResultKeys()
+	if len(keys) == 0 {
+		m.detailSelected = 0
+		m.detailScroll = 0
+		m.status = "no fields available"
+		return
+	}
+
+	m.detailSelected += delta
+	if m.detailSelected < 0 {
+		m.detailSelected = 0
+	}
+	if m.detailSelected >= len(keys) {
+		m.detailSelected = len(keys) - 1
+	}
+
+	m.clampDetailViewport()
+	m.status = fmt.Sprintf("field %d of %d (%s)", m.detailSelected+1, len(keys), keys[m.detailSelected])
+}
+
+func (m *Model) openJSONModal() error {
+	_, rawItem, ok := m.selectedResultItems()
+	if !ok {
+		return errors.New("no rows available")
+	}
+
+	payload, err := json.MarshalIndent(rawItem, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to render JSON item: %w", err)
+	}
+
+	m.jsonModalLines = strings.Split(string(payload), "\n")
+	if len(m.jsonModalLines) == 0 {
+		m.jsonModalLines = []string{"{}"}
+	}
+	m.jsonModalScroll = 0
+	m.jsonModalOpen = true
+	m.clampJSONModalViewport()
+	m.status = fmt.Sprintf("opened JSON modal for row %d", m.resultSelected+1)
+
+	return nil
+}
+
+func (m Model) jsonModalPageSize() int {
+	pageSize := m.height - 16
+	if pageSize < 4 {
+		return 4
+	}
+
+	return pageSize
+}
+
+func (m *Model) clampJSONModalViewport() {
+	if len(m.jsonModalLines) == 0 {
+		m.jsonModalScroll = 0
+		return
+	}
+
+	maxScroll := len(m.jsonModalLines) - m.jsonModalPageSize()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+
+	if m.jsonModalScroll < 0 {
+		m.jsonModalScroll = 0
+	}
+	if m.jsonModalScroll > maxScroll {
+		m.jsonModalScroll = maxScroll
+	}
+}
+
+func (m *Model) moveJSONModalScroll(delta int) {
+	if len(m.jsonModalLines) == 0 {
+		m.status = "modal has no content"
+		m.jsonModalScroll = 0
+		return
+	}
+
+	m.jsonModalScroll += delta
+	m.clampJSONModalViewport()
+
+	end := m.jsonModalScroll + m.jsonModalPageSize()
+	if end > len(m.jsonModalLines) {
+		end = len(m.jsonModalLines)
+	}
+
+	m.status = fmt.Sprintf("JSON lines %d-%d of %d", m.jsonModalScroll+1, end, len(m.jsonModalLines))
 }
 
 func (m Model) queryFocusLabel() string {

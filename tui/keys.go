@@ -12,6 +12,7 @@ type KeyMap struct {
 	Query     QueryKeyMap
 	Scan      ScanKeyMap
 	Results   ResultsKeyMap
+	Detail    DetailKeyMap
 }
 
 type GlobalKeyMap struct {
@@ -45,6 +46,14 @@ type ResultsKeyMap struct {
 	NextPage key.Binding
 	PrevPage key.Binding
 	Open     key.Binding
+}
+
+type DetailKeyMap struct {
+	MoveUp   key.Binding
+	MoveDown key.Binding
+	NextPage key.Binding
+	PrevPage key.Binding
+	OpenJSON key.Binding
 }
 
 func defaultKeyMap() KeyMap {
@@ -131,6 +140,28 @@ func defaultKeyMap() KeyMap {
 				key.WithHelp("enter", "open row detail"),
 			),
 		},
+		Detail: DetailKeyMap{
+			MoveUp: key.NewBinding(
+				key.WithKeys("up", "k"),
+				key.WithHelp("up/k", "move detail"),
+			),
+			MoveDown: key.NewBinding(
+				key.WithKeys("down", "j"),
+				key.WithHelp("down/j", "move detail"),
+			),
+			NextPage: key.NewBinding(
+				key.WithKeys("n", "right", "pgdown"),
+				key.WithHelp("n", "next page"),
+			),
+			PrevPage: key.NewBinding(
+				key.WithKeys("p", "left", "pgup"),
+				key.WithHelp("p", "previous page"),
+			),
+			OpenJSON: key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "toggle JSON modal"),
+			),
+		},
 	}
 }
 
@@ -183,6 +214,14 @@ func (k KeyMap) stateBindings(state viewState) []key.Binding {
 			k.Results.NextPage,
 			k.Results.PrevPage,
 			k.Results.Open,
+		}
+	case viewStateDetail:
+		return []key.Binding{
+			k.Detail.MoveUp,
+			k.Detail.MoveDown,
+			k.Detail.NextPage,
+			k.Detail.PrevPage,
+			k.Detail.OpenJSON,
 		}
 	default:
 		return nil

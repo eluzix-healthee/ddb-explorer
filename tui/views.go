@@ -146,6 +146,90 @@ func (m Model) resultsView() string {
 	return m.theme.Panel.Render(body)
 }
 
+func (m Model) detailView() string {
+	if m.jsonModalOpen {
+		return m.jsonModalView()
+	}
+
+	tableName := m.activeTable
+	if tableName == "" {
+		tableName = "(none)"
+	}
+
+	fields := m.selectedResultKeys()
+	detailRows := m.renderDetailRows(fields)
+	detailContent := lipgloss.JoinVertical(lipgloss.Left, detailRows...)
+
+	rowLabel := "Row 0 of 0"
+	if len(m.resultItems) > 0 {
+		rowLabel = fmt.Sprintf("Row %d of %d", m.resultSelected+1, len(m.resultItems))
+	}
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.theme.Title.Render("Item Detail"),
+		"",
+		m.theme.Body.Render("Table: "+tableName),
+		m.theme.Success.Render(rowLabel),
+		"",
+		detailContent,
+		"",
+		m.theme.Hint.Render("Use ↑/↓ (or j/k) to inspect fields. Press Enter to open raw JSON modal."),
+	)
+
+	return m.theme.Panel.Render(body)
+}
+
+func (m Model) jsonModalView() string {
+	modalWidth := m.width - 12
+	if modalWidth > 108 {
+		modalWidth = 108
+	}
+	if modalWidth < 32 {
+		modalWidth = 32
+	}
+
+	lineWidth := modalWidth - 8
+	if lineWidth < 12 {
+		lineWidth = 12
+	}
+
+	start := m.jsonModalScroll
+	if start < 0 {
+		start = 0
+	}
+	if start > len(m.jsonModalLines) {
+		start = len(m.jsonModalLines)
+	}
+
+	end := start + m.jsonModalPageSize()
+	if end > len(m.jsonModalLines) {
+		end = len(m.jsonModalLines)
+	}
+
+	rendered := make([]string, 0, end-start)
+	for idx := start; idx < end; idx++ {
+		rendered = append(rendered, truncateRunes(m.jsonModalLines[idx], lineWidth))
+	}
+	if len(rendered) == 0 {
+		rendered = append(rendered, "{}")
+	}
+
+	header := fmt.Sprintf("Lines %d-%d of %d", start+1, end, len(m.jsonModalLines))
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.theme.Title.Render("Raw JSON Modal"),
+		m.theme.Success.Render(header),
+		"",
+		strings.Join(rendered, "\n"),
+		"",
+		m.theme.Hint.Render("Use ↑/↓ (or j/k) to scroll lines, n/p for pages, Enter or Esc to close."),
+	)
+
+	modalPanel := m.theme.Panel
+	return modalPanel.Width(modalWidth).Render(body)
+}
+
 func (m Model) resultsVisibleColumns() ([]string, int) {
 	if len(m.resultColumns) == 0 {
 		return nil, 0
@@ -231,6 +315,75 @@ func (m Model) renderResultRows(columns []string) []string {
 	}
 
 	return rows
+}
+
+func (m Model) renderDetailRows(fields []string) []string {
+	if len(fields) == 0 {
+		return []string{m.theme.Hint.Render("No fields available for this item.")}
+	}
+
+	item, _, ok := m.selectedResultItems()
+	if !ok {
+		return []string{m.theme.Hint.Render("No fields available for this item.")}
+	}
+
+	start := m.detailScroll
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(fields) {
+		start = len(fields) - 1
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	pageSize := m.detailPageSize()
+	end := start + pageSize
+	if end > len(fields) {
+		end = len(fields)
+	}
+
+	labelWidth := 24
+	valueWidth := m.width - labelWidth - 30
+	if valueWidth < 14 {
+		valueWidth = 14
+	}
+
+	lines := make([]string, 0, (end-start)*3+1)
+	for idx := start; idx < end; idx++ {
+		field := fields[idx]
+		value := fmt.Sprint(item[field])
+		wrapped := wrapRunes(value, valueWidth)
+		if len(wrapped) == 0 {
+			wrapped = []string{""}
+		}
+
+		marker := "  "
+		if idx == m.detailSelected {
+			marker = "> "
+		}
+
+		head := fmt.Sprintf("%s%-*s %s", marker, labelWidth, field+":", wrapped[0])
+		if idx == m.detailSelected {
+			head = m.theme.Highlight.Render(head)
+		}
+		lines = append(lines, head)
+
+		maxContinuation := 2
+		for lineIdx := 1; lineIdx < len(wrapped) && lineIdx <= maxContinuation; lineIdx++ {
+			lines = append(lines, fmt.Sprintf("  %-*s %s", labelWidth, "", wrapped[lineIdx]))
+		}
+		if len(wrapped) > maxContinuation+1 {
+			lines = append(lines, m.theme.Hint.Render(fmt.Sprintf("  %-*s %s", labelWidth, "", "…")))
+		}
+	}
+
+	if len(fields) > pageSize {
+		lines = append(lines, m.theme.Hint.Render(fmt.Sprintf("Showing fields %d-%d of %d", start+1, end, len(fields))))
+	}
+
+	return lines
 }
 
 func (m Model) renderQueryFields() []string {
@@ -362,6 +515,35 @@ func truncateRunes(value string, limit int) string {
 	}
 
 	return string(runes[:limit-1]) + "…"
+}
+
+func wrapRunes(value string, limit int) []string {
+	if limit <= 0 {
+		return []string{""}
+	}
+
+	normalized := strings.ReplaceAll(value, "\r\n", "\n")
+	segments := strings.Split(normalized, "\n")
+	wrapped := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		runes := []rune(segment)
+		if len(runes) == 0 {
+			wrapped = append(wrapped, "")
+			continue
+		}
+
+		for len(runes) > limit {
+			wrapped = append(wrapped, string(runes[:limit]))
+			runes = runes[limit:]
+		}
+		wrapped = append(wrapped, string(runes))
+	}
+
+	if len(wrapped) == 0 {
+		return []string{""}
+	}
+
+	return wrapped
 }
 
 func formatBytes(sizeBytes int64) string {

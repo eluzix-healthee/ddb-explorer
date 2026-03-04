@@ -132,7 +132,7 @@
       "dependencies": [
         "US-008"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-010",
