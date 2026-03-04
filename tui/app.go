@@ -101,6 +101,11 @@ type Model struct {
 	status  string
 	err     error
 
+	nextRequestID             uint64
+	pendingTableLoadRequestID uint64
+	pendingQueryRequestID     uint64
+	pendingScanRequestID      uint64
+
 	tableFilter       string
 	filterInputActive bool
 	selectedTable     int
@@ -133,12 +138,14 @@ func NewModel(profile string, client *aws.Client) Model {
 	spin.Style = theme.Highlight
 
 	return Model{
-		profile: profile,
-		client:  client,
-		width:   80,
-		height:  24,
-		state:   viewStateLoading,
-		status:  "loading DynamoDB tables",
+		profile:                   profile,
+		client:                    client,
+		width:                     80,
+		height:                    24,
+		state:                     viewStateLoading,
+		status:                    "loading DynamoDB tables",
+		nextRequestID:             1,
+		pendingTableLoadRequestID: 1,
 		queryFields: []queryField{
 			{label: "Partition Key Name", placeholder: "e.g. account_id", required: true},
 			{label: "Partition Key Value", placeholder: "required value", required: true},
@@ -157,7 +164,7 @@ func NewProgram(model Model) *tea.Program {
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.loadTablesWithSpinnerCmd()
+	return m.loadTablesWithSpinnerCmd(m.pendingTableLoadRequestID)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -194,6 +201,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetailKey(msg)
 		}
 	case tableLoadSuccessMsg:
+		if !m.isExpectedTableLoadResponse(msg.requestID) {
+			m.status = staleResponseStatus("table load", msg.requestID)
+			return m, nil
+		}
+		m.pendingTableLoadRequestID = 0
 		m.tables = msg.tables
 		if err := m.transitionTo(viewStateTables); err != nil {
 			m.transitionFailure(err)
@@ -207,6 +219,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, nil
 	case tableLoadErrorMsg:
+		if !m.isExpectedTableLoadResponse(msg.requestID) {
+			m.status = staleResponseStatus("table load", msg.requestID)
+			return m, nil
+		}
+		m.pendingTableLoadRequestID = 0
 		if err := m.transitionTo(viewStateError); err != nil {
 			m.transitionFailure(err)
 			return m, nil
@@ -215,6 +232,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = normalizeError(msg.err, "table load failed")
 		return m, nil
 	case querySuccessMsg:
+		if !m.isExpectedQueryResponse(msg.requestID) {
+			m.status = staleResponseStatus("query", msg.requestID)
+			return m, nil
+		}
+		m.pendingQueryRequestID = 0
 		if err := m.enterResultsView(msg.tableName, msg.result, viewStateQuery); err != nil {
 			m.transitionFailure(err)
 			return m, nil
@@ -223,10 +245,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, nil
 	case queryErrorMsg:
+		if !m.isExpectedQueryResponse(msg.requestID) {
+			m.status = staleResponseStatus("query", msg.requestID)
+			return m, nil
+		}
+		m.pendingQueryRequestID = 0
 		m.status = fmt.Sprintf("query failed for %s", msg.tableName)
 		m.err = normalizeError(msg.err, "query failed")
 		return m, nil
 	case scanSuccessMsg:
+		if !m.isExpectedScanResponse(msg.requestID) {
+			m.status = staleResponseStatus("scan", msg.requestID)
+			return m, nil
+		}
+		m.pendingScanRequestID = 0
 		if err := m.enterResultsView(msg.tableName, msg.result, viewStateScan); err != nil {
 			m.transitionFailure(err)
 			return m, nil
@@ -235,6 +267,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, nil
 	case scanErrorMsg:
+		if !m.isExpectedScanResponse(msg.requestID) {
+			m.status = staleResponseStatus("scan", msg.requestID)
+			return m, nil
+		}
+		m.pendingScanRequestID = 0
 		m.status = fmt.Sprintf("scan failed for %s", msg.tableName)
 		m.err = normalizeError(msg.err, "scan failed")
 		return m, nil
@@ -275,22 +312,22 @@ func (m Model) View() string {
 	return m.renderChrome(content)
 }
 
-func (m Model) loadTablesWithSpinnerCmd() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, loadTablesCmd(m.client))
+func (m Model) loadTablesWithSpinnerCmd(requestID uint64) tea.Cmd {
+	return tea.Batch(m.spinner.Tick, loadTablesCmd(m.client, requestID))
 }
 
-func loadTablesCmd(client *aws.Client) tea.Cmd {
+func loadTablesCmd(client *aws.Client, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
-			return tableLoadErrorMsg{err: errors.New("aws client is nil")}
+			return tableLoadErrorMsg{requestID: requestID, err: errors.New("aws client is nil")}
 		}
 
 		tables, err := client.ListTables()
 		if err != nil {
-			return tableLoadErrorMsg{err: err}
+			return tableLoadErrorMsg{requestID: requestID, err: err}
 		}
 
-		return tableLoadSuccessMsg{tables: tables}
+		return tableLoadSuccessMsg{requestID: requestID, tables: tables}
 	}
 }
 
@@ -300,6 +337,31 @@ func normalizeError(err error, fallback string) error {
 	}
 
 	return errors.New(fallback)
+}
+
+func staleResponseStatus(operation string, requestID uint64) string {
+	if requestID == 0 {
+		return fmt.Sprintf("ignored stale %s response", operation)
+	}
+
+	return fmt.Sprintf("ignored stale %s response #%d", operation, requestID)
+}
+
+func (m *Model) reserveRequestID() uint64 {
+	m.nextRequestID++
+	return m.nextRequestID
+}
+
+func (m Model) isExpectedTableLoadResponse(requestID uint64) bool {
+	return m.state == viewStateLoading && requestID != 0 && requestID == m.pendingTableLoadRequestID
+}
+
+func (m Model) isExpectedQueryResponse(requestID uint64) bool {
+	return m.state == viewStateQuery && requestID != 0 && requestID == m.pendingQueryRequestID
+}
+
+func (m Model) isExpectedScanResponse(requestID uint64) bool {
+	return m.state == viewStateScan && requestID != 0 && requestID == m.pendingScanRequestID
 }
 
 func validateStateTransition(currentState viewState, nextState viewState) error {
@@ -338,6 +400,9 @@ func (m *Model) transitionFailure(err error) {
 	m.state = viewStateError
 	m.status = "internal state transition error"
 	m.err = err
+	m.pendingTableLoadRequestID = 0
+	m.pendingQueryRequestID = 0
+	m.pendingScanRequestID = 0
 }
 
 func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
@@ -351,6 +416,12 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 		m.status = "already at root view"
 		return m, nil
 	case viewStateQuery, viewStateScan:
+		if m.state == viewStateQuery {
+			m.pendingQueryRequestID = 0
+		}
+		if m.state == viewStateScan {
+			m.pendingScanRequestID = 0
+		}
 		if err := m.transitionTo(viewStateTables); err != nil {
 			m.transitionFailure(err)
 			return m, nil
@@ -421,10 +492,14 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.transitionFailure(err)
 			return m, nil
 		}
+		requestID := m.reserveRequestID()
+		m.pendingTableLoadRequestID = requestID
+		m.pendingQueryRequestID = 0
+		m.pendingScanRequestID = 0
 		m.status = "refreshing table list"
 		m.err = nil
 		m.filterInputActive = false
-		return m, m.loadTablesWithSpinnerCmd()
+		return m, m.loadTablesWithSpinnerCmd(requestID)
 	}
 	if key.Matches(msg, m.keys.TableList.Filter) {
 		m.filterInputActive = true
@@ -460,6 +535,7 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Query.SwitchScan) {
+		m.pendingQueryRequestID = 0
 		if err := m.transitionTo(viewStateScan); err != nil {
 			m.transitionFailure(err)
 			return m, nil
@@ -493,7 +569,10 @@ func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.status = fmt.Sprintf("running query for %s", request.tableName)
 		m.err = nil
-		return m, runQueryCmd(m.client, request)
+		requestID := m.reserveRequestID()
+		m.pendingQueryRequestID = requestID
+		m.pendingScanRequestID = 0
+		return m, runQueryCmd(m.client, request, requestID)
 	}
 
 	if m.queryFocus >= len(m.queryFields) {
@@ -517,7 +596,10 @@ func (m Model) updateScanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.status = fmt.Sprintf("running scan for %s", m.activeTable)
 		m.err = nil
-		return m, runScanCmd(m.client, m.activeTable)
+		requestID := m.reserveRequestID()
+		m.pendingScanRequestID = requestID
+		m.pendingQueryRequestID = 0
+		return m, runScanCmd(m.client, m.activeTable, requestID)
 	}
 	return m, nil
 }
@@ -690,6 +772,8 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) error {
 	m.resultPage = 0
 	m.resultOrigin = ""
 	m.resultHasMore = false
+	m.pendingQueryRequestID = 0
+	m.pendingScanRequestID = 0
 	m.detailSelected = 0
 	m.detailScroll = 0
 	m.jsonModalOpen = false
@@ -1193,10 +1277,10 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 	return request, nil
 }
 
-func runQueryCmd(client *aws.Client, request queryRequest) tea.Cmd {
+func runQueryCmd(client *aws.Client, request queryRequest, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
-			return queryErrorMsg{tableName: request.tableName, err: errors.New("aws client is nil")}
+			return queryErrorMsg{requestID: requestID, tableName: request.tableName, err: errors.New("aws client is nil")}
 		}
 
 		result, err := client.Query(
@@ -1210,24 +1294,24 @@ func runQueryCmd(client *aws.Client, request queryRequest) tea.Cmd {
 			nil,
 		)
 		if err != nil {
-			return queryErrorMsg{tableName: request.tableName, err: err}
+			return queryErrorMsg{requestID: requestID, tableName: request.tableName, err: err}
 		}
 
-		return querySuccessMsg{tableName: request.tableName, result: result}
+		return querySuccessMsg{requestID: requestID, tableName: request.tableName, result: result}
 	}
 }
 
-func runScanCmd(client *aws.Client, tableName string) tea.Cmd {
+func runScanCmd(client *aws.Client, tableName string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		if client == nil {
-			return scanErrorMsg{tableName: tableName, err: errors.New("aws client is nil")}
+			return scanErrorMsg{requestID: requestID, tableName: tableName, err: errors.New("aws client is nil")}
 		}
 
 		result, err := client.Scan(tableName, nil)
 		if err != nil {
-			return scanErrorMsg{tableName: tableName, err: err}
+			return scanErrorMsg{requestID: requestID, tableName: tableName, err: err}
 		}
 
-		return scanSuccessMsg{tableName: tableName, result: result}
+		return scanSuccessMsg{requestID: requestID, tableName: tableName, result: result}
 	}
 }

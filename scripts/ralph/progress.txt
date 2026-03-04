@@ -7,6 +7,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - Keep reusable color tokens and lipgloss theme definitions in `tui/styles`; view/component code should consume styles through the model-owned theme instead of creating ad-hoc styles.
 - Keep keyboard hints generated from `key.Binding` metadata (`Binding.Help()`) so help text stays in sync with keymap changes.
 - For async loading screens, gate `spinner.TickMsg` handling by current view-state and re-enter loading with `tea.Batch(spinner.Tick, loadCmd)` so the spinner runs only while that screen is active.
+- For async Bubble Tea data commands, include a request ID in every success/error `tea.Msg` and process the message only when the model is still in the expected state with the matching pending request ID.
 - Use `Program.Run()` (not deprecated `Program.Start()`) when launching Bubble Tea programs from `main.go`.
 - For keyboard-heavy Bubble Tea views, route global keys first and then dispatch to per-state key handlers; this keeps transitions explicit and prevents conflicting key behavior across screens.
 - Route every view change through a shared transition validator (`transitionTo` + `validateStateTransition`) and drop into `viewStateError` on invalid transitions so impossible navigation paths cannot leak into rendering.
@@ -139,4 +140,16 @@ Thread: https://ampcode.com/threads/T-019cb8a4-373e-76c9-aca7-b606b4cb92f9
   - Keep help/status lines in shared chrome (not embedded in individual view content) to guarantee consistent layout across every state.
   - Truncate chrome text to terminal width before rendering fixed-width bars to avoid wrap-induced layout drift.
   - Transition validation tests are easiest to drive by sending a message that is valid in one state but invalid in another (for example, `querySuccessMsg` while in `tables`).
+---
+
+## 2026-03-04 13:49:26 IST - US-011
+Thread: https://ampcode.com/threads/T-019cb8a9-c102-7098-b2e7-cffffd8a6725
+- Added async request correlation IDs for table load/query/scan commands and threaded those IDs through typed success/error messages.
+- Hardened update handling to accept async responses only when state and pending request IDs match, and to ignore stale out-of-order responses safely.
+- Added async/failure regression coverage for nil-client command errors, stale query response rejection after flow switches, and recoverable query error handling.
+- Files changed: `tui/app.go`, `tui/messages.go`, `tui/async_commands_test.go`, `tui/table_list_test.go`, `tui/results_test.go`, `tui/state_chrome_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - In Bubble Tea async flows, treat command responses as potentially stale and validate both state and request identity before mutating model state.
+  - Clear pending request IDs when leaving a flow (`query`/`scan`) so late responses from abandoned commands cannot hijack navigation.
+  - Unit-testing command factories directly (calling the returned `tea.Cmd`) is a fast way to validate typed error-message contracts without network dependencies.
 ---

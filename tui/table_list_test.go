@@ -78,7 +78,7 @@ func loadTablesForTest(t *testing.T) Model {
 		{Name: "users", Status: "ACTIVE", ItemCount: 7, SizeBytes: 9_100},
 	}
 
-	next, _ := m.Update(tableLoadSuccessMsg{tables: tables})
+	next, _ := m.Update(tableLoadSuccessMsg{requestID: m.pendingTableLoadRequestID, tables: tables})
 	loaded, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)

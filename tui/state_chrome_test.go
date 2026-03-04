@@ -4,28 +4,25 @@ import (
 	"strings"
 	"testing"
 
-	"ddb-explorer/aws"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestInvalidTransitionFallsBackToErrorState(t *testing.T) {
 	m := loadTablesForTest(t)
-
-	next, _ := m.Update(querySuccessMsg{tableName: "orders", result: aws.QueryResult{}})
-	updated, ok := next.(Model)
-	if !ok {
-		t.Fatalf("expected Model, got %T", next)
+	err := m.transitionTo(viewStateResults)
+	if err == nil {
+		t.Fatal("expected transition validation to fail")
 	}
+	m.transitionFailure(err)
 
-	if updated.state != viewStateError {
-		t.Fatalf("expected error state after invalid transition, got %q", updated.state)
+	if m.state != viewStateError {
+		t.Fatalf("expected error state after invalid transition, got %q", m.state)
 	}
-	if updated.err == nil {
+	if m.err == nil {
 		t.Fatal("expected transition error details")
 	}
-	if !strings.Contains(updated.err.Error(), "tables") || !strings.Contains(updated.err.Error(), "results") {
-		t.Fatalf("expected transition error to include source/target states, got %q", updated.err.Error())
+	if !strings.Contains(m.err.Error(), "tables") || !strings.Contains(m.err.Error(), "results") {
+		t.Fatalf("expected transition error to include source/target states, got %q", m.err.Error())
 	}
 }
 

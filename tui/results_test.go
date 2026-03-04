@@ -21,8 +21,9 @@ func TestQuerySuccessTransitionsToResultsWithAdaptiveColumns(t *testing.T) {
 		},
 		LastEvaluatedKey: map[string]interface{}{"account_id": "a2"},
 	}
+	m.pendingQueryRequestID = 42
 
-	next, _ := m.Update(querySuccessMsg{tableName: "orders", result: result})
+	next, _ := m.Update(querySuccessMsg{requestID: 42, tableName: "orders", result: result})
 	updated, ok := next.(Model)
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
