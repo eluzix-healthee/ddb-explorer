@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"ddb-explorer/aws"
+	"ddb-explorer/tui/styles"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -31,13 +32,14 @@ type Model struct {
 	showHelp bool
 	spinner  spinner.Model
 	keys     KeyMap
-	styles   Styles
+	theme    styles.Theme
 }
 
 func NewModel(profile string, client *aws.Client) Model {
+	theme := styles.Default()
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	spin.Style = defaultStyles().Highlight
+	spin.Style = theme.Highlight
 
 	return Model{
 		profile: profile,
@@ -48,7 +50,7 @@ func NewModel(profile string, client *aws.Client) Model {
 		status:  "connecting to AWS",
 		spinner: spin,
 		keys:    defaultKeyMap(),
-		styles:  defaultStyles(),
+		theme:   theme,
 	}
 }
 
@@ -107,7 +109,7 @@ func (m Model) View() string {
 	case viewStateError:
 		content = m.errorView()
 	default:
-		content = m.styles.Error.Render("invalid app state")
+		content = m.theme.Error.Render("invalid app state")
 	}
 
 	if m.showHelp {

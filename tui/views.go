@@ -9,26 +9,26 @@ import (
 func (m Model) loadingView() string {
 	body := lipgloss.JoinVertical(
 		lipgloss.Center,
-		m.styles.Title.Render("DDB Explorer"),
+		m.theme.Title.Render("DDB Explorer"),
 		"",
-		m.styles.Highlight.Render(m.spinner.View()+" Connecting to DynamoDB..."),
+		m.theme.Highlight.Render(m.spinner.View()+" Connecting to DynamoDB..."),
 		"",
-		m.styles.Hint.Render("Press q to quit"),
+		m.theme.Hint.Render("Press q to quit"),
 	)
-	return m.styles.Panel.Render(body)
+	return m.theme.Panel.Render(body)
 }
 
 func (m Model) tablesView() string {
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
-		m.styles.Title.Render("DDB Explorer"),
+		m.theme.Title.Render("DDB Explorer"),
 		"",
-		m.styles.Success.Render("Bubble Tea app skeleton is running."),
-		m.styles.Body.Render("Table list/query views will be added in upcoming stories."),
+		m.theme.Success.Render("Bubble Tea app skeleton is running."),
+		m.theme.Body.Render("Table list/query views will be added in upcoming stories."),
 		"",
-		m.styles.Hint.Render("Global controls are already wired."),
+		m.theme.Hint.Render("Global controls are already wired."),
 	)
-	return m.styles.Panel.Render(body)
+	return m.theme.Panel.Render(body)
 }
 
 func (m Model) errorView() string {
@@ -39,12 +39,12 @@ func (m Model) errorView() string {
 
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
-		m.styles.Title.Render("DDB Explorer"),
+		m.theme.Title.Render("DDB Explorer"),
 		"",
-		m.styles.Error.Render("Unable to connect to DynamoDB."),
-		m.styles.Body.Render(fmt.Sprintf("Details: %s", errText)),
+		m.theme.Error.Render("Unable to connect to DynamoDB."),
+		m.theme.Body.Render(fmt.Sprintf("Details: %s", errText)),
 		"",
-		m.styles.Hint.Render("Verify AWS credentials/profile and relaunch."),
+		m.theme.Hint.Render("Verify AWS credentials/profile and relaunch."),
 	)
-	return m.styles.Panel.Render(body)
+	return m.theme.Panel.Render(body)
 }

@@ -40,7 +40,7 @@
       "dependencies": [
         "US-002"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",
