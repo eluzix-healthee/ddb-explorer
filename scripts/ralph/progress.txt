@@ -9,6 +9,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - For async loading screens, gate `spinner.TickMsg` handling by current view-state and re-enter loading with `tea.Batch(spinner.Tick, loadCmd)` so the spinner runs only while that screen is active.
 - Use `Program.Run()` (not deprecated `Program.Start()`) when launching Bubble Tea programs from `main.go`.
 - For keyboard-heavy Bubble Tea views, route global keys first and then dispatch to per-state key handlers; this keeps transitions explicit and prevents conflicting key behavior across screens.
+- Route every view change through a shared transition validator (`transitionTo` + `validateStateTransition`) and drop into `viewStateError` on invalid transitions so impossible navigation paths cannot leak into rendering.
 - For Bubble Tea forms, treat the submit action as a virtual focus target at index `len(fields)` so `tab`/`shift+tab` navigation and explicit `enter` submission stay predictable.
 - When supporting optional DynamoDB index queries, only set `QueryInput.IndexName` when the form value is non-empty to preserve base-table query behavior.
 - For paginated Bubble Tea tables, keep selection as an absolute row index and derive the visible page from `selected/pageSize`; this keeps resize and page-jump behavior deterministic.
@@ -125,4 +126,17 @@ Thread: https://ampcode.com/threads/T-019cb89e-7547-7312-aa80-7f20c575ed5c
   - Keep detail/modal navigation in the same state and let `esc` close modal first; this keeps back-stack behavior deterministic.
   - Use `json.MarshalIndent` on raw DynamoDB payloads for modal rendering so nested structures stay readable while table cells remain compact.
   - For long detail values, wrap by rune width and cap continuation lines to preserve panel stability in narrow terminals.
+---
+
+## 2026-03-04 13:43:06 IST - US-010
+Thread: https://ampcode.com/threads/T-019cb8a4-373e-76c9-aca7-b606b4cb92f9
+- Added explicit app-level transition validation in `tui/app.go` with a shared transition map and `transitionTo` helper, and wired all navigation/state changes through that path.
+- Added internal transition-failure fallback to `viewStateError` so invalid transition paths fail safely without leaving the app in ambiguous state.
+- Refactored shared chrome in `tui/components.go` to always render title/help/status bars while centering content in the remaining viewport.
+- Added state/chrome regression tests (`tui/state_chrome_test.go`) and updated existing results/detail tests for new state-entry helpers.
+- Files changed: `tui/app.go`, `tui/components.go`, `tui/results_test.go`, `tui/detail_test.go`, `tui/state_chrome_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep help/status lines in shared chrome (not embedded in individual view content) to guarantee consistent layout across every state.
+  - Truncate chrome text to terminal width before rendering fixed-width bars to avoid wrap-induced layout drift.
+  - Transition validation tests are easiest to drive by sending a message that is valid in one state but invalid in another (for example, `querySuccessMsg` while in `tables`).
 ---

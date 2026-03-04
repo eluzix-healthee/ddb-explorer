@@ -12,14 +12,16 @@ import (
 
 func TestResultsEnterOpensItemDetailView(t *testing.T) {
 	m := NewModel("dev", nil)
-	m.enterResultsView("orders", aws.QueryResult{
+	if err := m.enterResultsView("orders", aws.QueryResult{
 		Items: []map[string]interface{}{
 			{"account_id": "acc-1", "status": "OPEN", "notes": "short"},
 		},
 		RawItems: []map[string]interface{}{
 			{"account_id": "acc-1", "status": "OPEN", "notes": "short"},
 		},
-	}, viewStateQuery)
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.state != viewStateDetail {
@@ -51,10 +53,12 @@ func TestDetailJSONModalScrollsAndCloses(t *testing.T) {
 			"tags":   tags,
 		},
 	}
-	m.enterResultsView("orders", aws.QueryResult{
+	if err := m.enterResultsView("orders", aws.QueryResult{
 		Items:    []map[string]interface{}{{"account_id": "acc-1", "payload": "{...}"}},
 		RawItems: []map[string]interface{}{raw},
-	}, viewStateQuery)
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -96,10 +100,12 @@ func TestJSONModalRemainsCenteredOnResize(t *testing.T) {
 		},
 	}
 
-	m.enterResultsView("orders", aws.QueryResult{
+	if err := m.enterResultsView("orders", aws.QueryResult{
 		Items:    []map[string]interface{}{{"account_id": "acc-1", "history": "[...]"}},
 		RawItems: []map[string]interface{}{raw},
-	}, viewStateQuery)
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 

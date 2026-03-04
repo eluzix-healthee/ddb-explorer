@@ -59,8 +59,9 @@ func TestResultsKeyboardNavigationMovesRowsAndPages(t *testing.T) {
 		})
 	}
 
-	m.enterResultsView("orders", aws.QueryResult{Items: items}, viewStateQuery)
-
+	if err := m.enterResultsView("orders", aws.QueryResult{Items: items}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	if m.resultSelected != 2 {
@@ -90,7 +91,9 @@ func TestResultsViewRemainsCenteredOnResize(t *testing.T) {
 		{"id": "item-01", "state": "OPEN"},
 		{"id": "item-02", "state": "CLOSED"},
 	}
-	m.enterResultsView("orders", aws.QueryResult{Items: items}, viewStateQuery)
+	if err := m.enterResultsView("orders", aws.QueryResult{Items: items}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
 
 	largeModel, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 36})
 	large, ok := largeModel.(Model)

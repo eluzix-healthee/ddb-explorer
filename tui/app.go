@@ -27,6 +27,46 @@ const (
 	viewStateError   viewState = "error"
 )
 
+var allowedViewStateTransitions = map[viewState]map[viewState]struct{}{
+	viewStateLoading: {
+		viewStateTables:  {},
+		viewStateResults: {},
+		viewStateError:   {},
+	},
+	viewStateTables: {
+		viewStateLoading: {},
+		viewStateQuery:   {},
+		viewStateError:   {},
+	},
+	viewStateQuery: {
+		viewStateTables:  {},
+		viewStateScan:    {},
+		viewStateResults: {},
+		viewStateError:   {},
+	},
+	viewStateScan: {
+		viewStateTables:  {},
+		viewStateQuery:   {},
+		viewStateResults: {},
+		viewStateError:   {},
+	},
+	viewStateResults: {
+		viewStateQuery:  {},
+		viewStateScan:   {},
+		viewStateDetail: {},
+		viewStateError:  {},
+	},
+	viewStateDetail: {
+		viewStateResults: {},
+		viewStateError:   {},
+	},
+	viewStateError: {
+		viewStateLoading: {},
+		viewStateTables:  {},
+		viewStateError:   {},
+	},
+}
+
 const (
 	queryFieldPartitionKey = iota
 	queryFieldPartitionValue
@@ -155,7 +195,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tableLoadSuccessMsg:
 		m.tables = msg.tables
-		m.state = viewStateTables
+		if err := m.transitionTo(viewStateTables); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.activeTable = ""
 		m.filterInputActive = false
 		m.selectedTable = 0
@@ -164,12 +207,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, nil
 	case tableLoadErrorMsg:
-		m.state = viewStateError
+		if err := m.transitionTo(viewStateError); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = "failed to load tables"
 		m.err = normalizeError(msg.err, "table load failed")
 		return m, nil
 	case querySuccessMsg:
-		m.enterResultsView(msg.tableName, msg.result, viewStateQuery)
+		if err := m.enterResultsView(msg.tableName, msg.result, viewStateQuery); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = fmt.Sprintf("query returned %d items from %s", len(msg.result.Items), msg.tableName)
 		m.err = nil
 		return m, nil
@@ -178,7 +227,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = normalizeError(msg.err, "query failed")
 		return m, nil
 	case scanSuccessMsg:
-		m.enterResultsView(msg.tableName, msg.result, viewStateScan)
+		if err := m.enterResultsView(msg.tableName, msg.result, viewStateScan); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = fmt.Sprintf("scan returned %d items from %s", len(msg.result.Items), msg.tableName)
 		m.err = nil
 		return m, nil
@@ -220,10 +272,6 @@ func (m Model) View() string {
 		content = m.theme.Error.Render("invalid app state")
 	}
 
-	if m.showHelp {
-		content = m.withHelp(content)
-	}
-
 	return m.renderChrome(content)
 }
 
@@ -254,6 +302,44 @@ func normalizeError(err error, fallback string) error {
 	return errors.New(fallback)
 }
 
+func validateStateTransition(currentState viewState, nextState viewState) error {
+	if currentState == nextState {
+		if _, ok := allowedViewStateTransitions[currentState]; ok {
+			return nil
+		}
+		return fmt.Errorf("unknown current state %q", currentState)
+	}
+
+	allowedNextStates, ok := allowedViewStateTransitions[currentState]
+	if !ok {
+		return fmt.Errorf("unknown current state %q", currentState)
+	}
+	if _, ok := allowedViewStateTransitions[nextState]; !ok {
+		return fmt.Errorf("unknown next state %q", nextState)
+	}
+
+	if _, ok := allowedNextStates[nextState]; !ok {
+		return fmt.Errorf("invalid view transition %q -> %q", currentState, nextState)
+	}
+
+	return nil
+}
+
+func (m *Model) transitionTo(nextState viewState) error {
+	if err := validateStateTransition(m.state, nextState); err != nil {
+		return err
+	}
+
+	m.state = nextState
+	return nil
+}
+
+func (m *Model) transitionFailure(err error) {
+	m.state = viewStateError
+	m.status = "internal state transition error"
+	m.err = err
+}
+
 func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 	switch m.state {
 	case viewStateTables:
@@ -265,7 +351,10 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 		m.status = "already at root view"
 		return m, nil
 	case viewStateQuery, viewStateScan:
-		m.state = viewStateTables
+		if err := m.transitionTo(viewStateTables); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = "returned to table list"
 		return m, nil
 	case viewStateResults:
@@ -275,12 +364,18 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.resultOrigin == viewStateScan {
-			m.state = viewStateScan
+			if err := m.transitionTo(viewStateScan); err != nil {
+				m.transitionFailure(err)
+				return m, nil
+			}
 			m.status = "returned to scan form"
 			return m, nil
 		}
 
-		m.state = viewStateQuery
+		if err := m.transitionTo(viewStateQuery); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = "returned to query form"
 		return m, nil
 	case viewStateDetail:
@@ -289,12 +384,18 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 			m.status = "closed JSON modal"
 			return m, nil
 		}
-		m.state = viewStateResults
+		if err := m.transitionTo(viewStateResults); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = "returned to results table"
 		return m, nil
 	case viewStateError:
 		if len(m.tables) > 0 {
-			m.state = viewStateTables
+			if err := m.transitionTo(viewStateTables); err != nil {
+				m.transitionFailure(err)
+				return m, nil
+			}
 			m.status = "returned to table list"
 			m.err = nil
 			return m, nil
@@ -316,7 +417,10 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if key.Matches(msg, m.keys.TableList.Refresh) {
-		m.state = viewStateLoading
+		if err := m.transitionTo(viewStateLoading); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = "refreshing table list"
 		m.err = nil
 		m.filterInputActive = false
@@ -342,7 +446,10 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		m.enterQueryFlow(table)
+		if err := m.enterQueryFlow(table); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.filterInputActive = false
 		m.status = fmt.Sprintf("opened query flow for %s", table.Name)
 		return m, nil
@@ -353,7 +460,10 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Query.SwitchScan) {
-		m.state = viewStateScan
+		if err := m.transitionTo(viewStateScan); err != nil {
+			m.transitionFailure(err)
+			return m, nil
+		}
 		m.status = fmt.Sprintf("switched to scan flow for %s", m.activeTable)
 		return m, nil
 	}
@@ -568,8 +678,10 @@ func (m Model) filteredTables() []aws.TableInfo {
 	return filtered
 }
 
-func (m *Model) enterQueryFlow(table aws.TableInfo) {
-	m.state = viewStateQuery
+func (m *Model) enterQueryFlow(table aws.TableInfo) error {
+	if err := m.transitionTo(viewStateQuery); err != nil {
+		return err
+	}
 	m.activeTable = table.Name
 	m.resultItems = nil
 	m.resultRawItems = nil
@@ -610,10 +722,14 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) {
 		},
 	}
 	m.queryFocus = 0
+
+	return nil
 }
 
-func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origin viewState) {
-	m.state = viewStateResults
+func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origin viewState) error {
+	if err := m.transitionTo(viewStateResults); err != nil {
+		return err
+	}
 	m.activeTable = tableName
 	m.resultItems = result.Items
 	if len(result.RawItems) == len(result.Items) {
@@ -633,6 +749,8 @@ func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origi
 	m.jsonModalLines = nil
 	m.jsonModalScroll = 0
 	m.clampResultsViewport()
+
+	return nil
 }
 
 func discoverResultColumns(items []map[string]interface{}) []string {
@@ -826,7 +944,9 @@ func (m *Model) openSelectedResultDetail() error {
 		m.resultSelected = len(m.resultItems) - 1
 	}
 
-	m.state = viewStateDetail
+	if err := m.transitionTo(viewStateDetail); err != nil {
+		return err
+	}
 	m.detailSelected = 0
 	m.detailScroll = 0
 	m.jsonModalOpen = false
