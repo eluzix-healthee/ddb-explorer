@@ -8,6 +8,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - Keep keyboard hints generated from `key.Binding` metadata (`Binding.Help()`) so help text stays in sync with keymap changes.
 - For async loading screens, gate `spinner.TickMsg` handling by current view-state and re-enter loading with `tea.Batch(spinner.Tick, loadCmd)` so the spinner runs only while that screen is active.
 - Use `Program.Run()` (not deprecated `Program.Start()`) when launching Bubble Tea programs from `main.go`.
+- For keyboard-heavy Bubble Tea views, route global keys first and then dispatch to per-state key handlers; this keeps transitions explicit and prevents conflicting key behavior across screens.
 
 ---
 
@@ -69,4 +70,17 @@ Thread: https://ampcode.com/threads/T-019cb88b-85f6-708f-84f4-6827acbf4527
   - Keep loading commands wrapped in a helper (`loadTablesWithSpinnerCmd`) so init and reload paths cannot drift.
   - Resize behavior is easy to regression-test by asserting rendered line count tracks terminal height after `tea.WindowSizeMsg` updates.
   - Run `golangci-lint run` directly before commit; the current `make lint` target does not fail the build when lint issues are present.
+---
+
+## 2026-03-04 13:20:21 IST - US-006
+Thread: https://ampcode.com/threads/T-019cb88f-737f-752d-a6a5-bc98e9153585
+- Implemented a fully rendered table list view showing table name, item count, size, and status with selected-row highlighting and viewport-aware row windowing.
+- Added live filtering (`/` to edit) that updates visible rows as the user types, plus keyboard navigation (`j/k` or arrows) with safe clamping.
+- Wired table selection to open query/scan flow states so Enter on a selected table transitions into the query path and supports scan switching/back navigation.
+- Added tests covering live filter behavior, selection-to-query transition, and table metadata rendering.
+- Files changed: `tui/app.go`, `tui/views.go`, `tui/keys.go`, `tui/table_list_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep table filtering as model-owned state and derive visible rows via a helper (`filteredTables`) so rendering and key handlers stay consistent.
+  - Reset or clamp selection whenever filter criteria changes to avoid invalid row indices after the visible set shrinks.
+  - Placeholder query/scan view states can be introduced early to lock in navigation contracts before full form implementation.
 ---

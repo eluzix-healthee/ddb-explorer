@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"ddb-explorer/aws"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -26,19 +28,73 @@ func (m Model) loadingView() string {
 }
 
 func (m Model) tablesView() string {
-	statusText := fmt.Sprintf("Loaded %d tables.", len(m.tables))
+	visibleTables := m.filteredTables()
+	statusText := fmt.Sprintf("Loaded %d tables (%d visible).", len(m.tables), len(visibleTables))
 	if len(m.tables) == 0 {
 		statusText = "No tables discovered for this profile."
 	}
+
+	filterLabel := "Filter: (none)"
+	if strings.TrimSpace(m.tableFilter) != "" {
+		filterLabel = fmt.Sprintf("Filter: %q", m.tableFilter)
+	}
+	if m.filterInputActive {
+		filterLabel = filterLabel + " [editing]"
+	}
+
+	header := fmt.Sprintf("%-34s %10s %10s %-12s", "Name", "Items", "Size", "Status")
+	rows := m.renderTableRows(visibleTables)
+	tableLines := make([]string, 0, len(rows)+1)
+	tableLines = append(tableLines, m.theme.Highlight.Render(header))
+	tableLines = append(tableLines, rows...)
+	tableContent := lipgloss.JoinVertical(lipgloss.Left, tableLines...)
 
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.theme.Title.Render("DDB Explorer"),
 		"",
 		m.theme.Success.Render(statusText),
-		m.theme.Body.Render("Table list/query views will be added in upcoming stories."),
+		m.theme.Body.Render(filterLabel),
 		"",
-		m.theme.Hint.Render("Press ctrl+h to see global and table-list key bindings."),
+		tableContent,
+		"",
+		m.theme.Hint.Render("Use / to edit filter, ↑/↓ or j/k to move, enter to open query/scan flow."),
+	)
+	return m.theme.Panel.Render(body)
+}
+
+func (m Model) queryView() string {
+	tableName := m.activeTable
+	if tableName == "" {
+		tableName = "(none)"
+	}
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.theme.Title.Render("Query Flow"),
+		"",
+		m.theme.Body.Render("Table: "+tableName),
+		m.theme.Body.Render("Query form fields will be implemented in US-007."),
+		"",
+		m.theme.Hint.Render("Press ctrl+s to switch to scan, esc to return to tables."),
+	)
+	return m.theme.Panel.Render(body)
+}
+
+func (m Model) scanView() string {
+	tableName := m.activeTable
+	if tableName == "" {
+		tableName = "(none)"
+	}
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.theme.Title.Render("Scan Flow"),
+		"",
+		m.theme.Body.Render("Table: "+tableName),
+		m.theme.Body.Render("Scan form controls will be implemented in US-007."),
+		"",
+		m.theme.Hint.Render("Press enter to run scan placeholder, esc to return to tables."),
 	)
 	return m.theme.Panel.Render(body)
 }
@@ -59,4 +115,99 @@ func (m Model) errorView() string {
 		m.theme.Hint.Render("Verify AWS credentials/profile and relaunch."),
 	)
 	return m.theme.Panel.Render(body)
+}
+
+func (m Model) renderTableRows(tables []aws.TableInfo) []string {
+	if len(tables) == 0 {
+		return []string{m.theme.Hint.Render("No tables match the current filter.")}
+	}
+
+	selected := m.selectedTable
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(tables) {
+		selected = len(tables) - 1
+	}
+
+	maxRows := m.height - 16
+	if maxRows < 4 {
+		maxRows = 4
+	}
+
+	start := 0
+	if selected >= maxRows {
+		start = selected - maxRows + 1
+	}
+	if start+maxRows > len(tables) {
+		start = len(tables) - maxRows
+		if start < 0 {
+			start = 0
+		}
+	}
+	end := start + maxRows
+	if end > len(tables) {
+		end = len(tables)
+	}
+
+	rows := make([]string, 0, (end-start)+1)
+	for idx := start; idx < end; idx++ {
+		table := tables[idx]
+		row := fmt.Sprintf(
+			"%-34s %10d %10s %-12s",
+			truncateRunes(table.Name, 34),
+			table.ItemCount,
+			formatBytes(table.SizeBytes),
+			truncateRunes(table.Status, 12),
+		)
+		if idx == selected {
+			rows = append(rows, m.theme.Highlight.Render("> "+row))
+			continue
+		}
+		rows = append(rows, "  "+row)
+	}
+
+	if len(tables) > maxRows {
+		rows = append(rows, m.theme.Hint.Render(fmt.Sprintf("Showing %d-%d of %d", start+1, end, len(tables))))
+	}
+
+	return rows
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit == 1 {
+		return "…"
+	}
+
+	return string(runes[:limit-1]) + "…"
+}
+
+func formatBytes(sizeBytes int64) string {
+	const (
+		unit       = int64(1024)
+		kiloSymbol = "KB"
+		megaSymbol = "MB"
+		gigaSymbol = "GB"
+	)
+
+	if sizeBytes < unit {
+		return fmt.Sprintf("%dB", sizeBytes)
+	}
+
+	if sizeBytes < unit*unit {
+		return fmt.Sprintf("%.1f%s", float64(sizeBytes)/float64(unit), kiloSymbol)
+	}
+	if sizeBytes < unit*unit*unit {
+		return fmt.Sprintf("%.1f%s", float64(sizeBytes)/float64(unit*unit), megaSymbol)
+	}
+
+	return fmt.Sprintf("%.1f%s", float64(sizeBytes)/float64(unit*unit*unit), gigaSymbol)
 }

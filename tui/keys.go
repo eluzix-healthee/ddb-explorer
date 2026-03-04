@@ -144,6 +144,19 @@ func (k KeyMap) stateBindings(state viewState) []key.Binding {
 			k.TableList.Open,
 			k.TableList.Refresh,
 		}
+	case viewStateQuery:
+		return []key.Binding{
+			k.Query.NextField,
+			k.Query.PrevField,
+			k.Query.Submit,
+			k.Query.SwitchScan,
+		}
+	case viewStateScan:
+		return []key.Binding{
+			k.Scan.Run,
+			k.Scan.NextPage,
+			k.Scan.PrevPage,
+		}
 	default:
 		return nil
 	}
