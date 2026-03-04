@@ -79,8 +79,8 @@ func (c *Client) ListTables() ([]TableInfo, error) {
 
 // QueryResult holds query results
 type QueryResult struct {
-	Items             []map[string]interface{}
-	RawItems          []map[string]interface{} // Structured data for JSON viewing
+	Items            []map[string]interface{}
+	RawItems         []map[string]interface{} // Structured data for JSON viewing
 	LastEvaluatedKey map[string]interface{}
 }
 
@@ -176,9 +176,9 @@ func formatAttributeValue(v types.AttributeValue) string {
 func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortValue, condition string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
 	limit := int32(15) // Load batch of 15 items
 	input := &dynamodb.QueryInput{
-		TableName: &tableName,
-		Limit:     &limit,
-		KeyConditionExpression: aws.String(fmt.Sprintf("#pk = :pk")),
+		TableName:              &tableName,
+		Limit:                  &limit,
+		KeyConditionExpression: aws.String("#pk = :pk"),
 		ExpressionAttributeNames: map[string]string{
 			"#pk": partitionKey,
 		},
@@ -196,7 +196,7 @@ func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortVal
 				exclKey[k] = &types.AttributeValueMemberS{Value: val}
 			case int64:
 				exclKey[k] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
-			// Add more types if needed
+				// Add more types if needed
 			}
 		}
 		input.ExclusiveStartKey = exclKey
@@ -272,7 +272,7 @@ func (c *Client) Scan(tableName string, exclusiveStartKey map[string]interface{}
 				exclKey[k] = &types.AttributeValueMemberS{Value: val}
 			case int64:
 				exclKey[k] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
-			// Add more types if needed
+				// Add more types if needed
 			}
 		}
 		input.ExclusiveStartKey = exclKey

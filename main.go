@@ -44,7 +44,7 @@ func main() {
 	model := tui.NewModel(*profile, client)
 	program := tui.NewProgram(model)
 
-	if err := program.Start(); err != nil {
+	if _, err := program.Run(); err != nil {
 		fmt.Printf("error running TUI: %v\n", err)
 		os.Exit(1)
 	}

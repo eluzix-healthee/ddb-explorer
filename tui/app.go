@@ -60,7 +60,7 @@ func NewProgram(model Model) *tea.Program {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, loadTablesCmd(m.client))
+	return m.loadTablesWithSpinnerCmd()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -92,7 +92,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key.Matches(msg, m.keys.TableList.Refresh) {
 				m.state = viewStateLoading
 				m.status = "refreshing table list"
-				return m, loadTablesCmd(m.client)
+				m.err = nil
+				return m, m.loadTablesWithSpinnerCmd()
 			}
 			if key.Matches(msg, m.keys.TableList.Open) {
 				m.status = "query and scan forms are coming in US-007"
@@ -135,6 +136,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = normalizeError(msg.err, "scan failed")
 		return m, nil
 	case spinner.TickMsg:
+		if m.state != viewStateLoading {
+			return m, nil
+		}
+
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -161,6 +166,10 @@ func (m Model) View() string {
 	}
 
 	return m.renderChrome(content)
+}
+
+func (m Model) loadTablesWithSpinnerCmd() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, loadTablesCmd(m.client))
 }
 
 func loadTablesCmd(client *aws.Client) tea.Cmd {

@@ -45,7 +45,7 @@ func Default() Theme {
 	highlightText := lipgloss.NewStyle().Foreground(palette.Highlight)
 
 	return Theme{
-		Title: highlightText.Copy().Bold(true),
+		Title: highlightText.Bold(true),
 		Body:  baseText,
 		Hint:  mutedText,
 		Error: lipgloss.NewStyle().

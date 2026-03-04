@@ -6,6 +6,8 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - For Bubble Tea migration work, keep state transitions in `tui/app.go` and keep rendering logic split across `tui/views.go` + `tui/components.go` to avoid another monolithic UI file.
 - Keep reusable color tokens and lipgloss theme definitions in `tui/styles`; view/component code should consume styles through the model-owned theme instead of creating ad-hoc styles.
 - Keep keyboard hints generated from `key.Binding` metadata (`Binding.Help()`) so help text stays in sync with keymap changes.
+- For async loading screens, gate `spinner.TickMsg` handling by current view-state and re-enter loading with `tea.Batch(spinner.Tick, loadCmd)` so the spinner runs only while that screen is active.
+- Use `Program.Run()` (not deprecated `Program.Start()`) when launching Bubble Tea programs from `main.go`.
 
 ---
 
@@ -54,4 +56,17 @@ Thread: https://ampcode.com/threads/T-019cb886-a1b4-77c1-b324-41287714150a
   - Keep placeholder view actions wired to future story IDs in status text; it preserves explicit transitions without implementing partial UI flows.
   - Prefer a small error normalization helper for typed failure messages so nil-error edge cases never leak ambiguous UI state.
   - When using Bubble Tea key bindings, `Binding.Help()` returns a struct (`key.Help`), not `(key, desc)` tuple values.
+---
+
+## 2026-03-04 13:14:30 IST - US-005
+Thread: https://ampcode.com/threads/T-019cb88b-85f6-708f-84f4-6827acbf4527
+- Implemented a centered loading screen with spinner, explicit context text, and active profile display.
+- Updated loading transitions so spinner ticks only while the app is in loading state, including refresh-triggered reloads.
+- Added loading-focused tests to verify context rendering, spinner gating outside loading state, and resize-driven recentering behavior.
+- Applied small staticcheck fixes required for a clean lint run (`Program.Run`, style copy deprecation, and redundant `fmt.Sprintf`).
+- Files changed: `tui/app.go`, `tui/views.go`, `tui/loading_test.go`, `main.go`, `tui/styles/theme.go`, `aws/dynamodb.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep loading commands wrapped in a helper (`loadTablesWithSpinnerCmd`) so init and reload paths cannot drift.
+  - Resize behavior is easy to regression-test by asserting rendered line count tracks terminal height after `tea.WindowSizeMsg` updates.
+  - Run `golangci-lint run` directly before commit; the current `make lint` target does not fail the build when lint issues are present.
 ---
