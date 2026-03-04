@@ -27,19 +27,61 @@ func TestQueryFormSupportsRequiredAndOptionalFields(t *testing.T) {
 	if opened.state != viewStateQuery {
 		t.Fatalf("expected query view, got %q", opened.state)
 	}
-	if got := opened.queryFields[queryFieldPartitionKey].value; got != "account_id" {
-		t.Fatalf("expected partition key to preload from table schema, got %q", got)
-	}
-	if got := opened.queryFields[queryFieldSortKey].value; got != "created_at" {
-		t.Fatalf("expected sort key to preload from table schema, got %q", got)
+	if got := opened.currentQueryTargetLabel(); got != "Table [account_id, created_at]" {
+		t.Fatalf("expected derived table key label, got %q", got)
 	}
 
 	view := opened.queryView()
-	required := []string{"Partition Key Name", "Partition Key Value", "Sort Key Name", "Sort Key Value", "Index Name", "Run Query"}
+	required := []string{"Source:", "account_id Value", "created_at Condition", "created_at Value", "Run Query"}
 	for _, value := range required {
 		if !strings.Contains(view, value) {
 			t.Fatalf("query view missing %q", value)
 		}
+	}
+}
+
+func TestQuerySourceCyclesThroughGSI(t *testing.T) {
+	m := NewModel("dev", nil)
+	m.tables = []aws.TableInfo{{
+		Name:         "orders",
+		PartitionKey: "account_id",
+		SortKey:      "created_at",
+		GSIKeys: []aws.IndexKeyInfo{{
+			Name:         "gsi_status",
+			PartitionKey: "status",
+			SortKey:      "updated_at",
+		}},
+	}}
+	m.state = viewStateTables
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got := m.currentQueryTargetLabel(); got != "Table [account_id, created_at]" {
+		t.Fatalf("expected table source by default, got %q", got)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlG})
+	if got := m.currentQueryTargetLabel(); got != "GSI: gsi_status [status, updated_at]" {
+		t.Fatalf("expected gsi source after ctrl+g, got %q", got)
+	}
+}
+
+func TestQuerySortConditionCyclesWithOptionKeys(t *testing.T) {
+	m := loadTablesForTest(t)
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m.queryFocus = queryFieldSortCondition
+	if got := m.queryFields[queryFieldSortCondition].value; got != "=" {
+		t.Fatalf("expected default sort condition '=', got %q", got)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	if got := m.queryFields[queryFieldSortCondition].value; got != "begins_with" {
+		t.Fatalf("expected next sort condition 'begins_with', got %q", got)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	if got := m.queryFields[queryFieldSortCondition].value; got != "=" {
+		t.Fatalf("expected previous sort condition '=', got %q", got)
 	}
 }
 
@@ -52,8 +94,8 @@ func TestQueryFormFocusOrderAndEditing(t *testing.T) {
 	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("pk")})
-	if got := m.queryFields[queryFieldPartitionKey].value; got != "pk" {
-		t.Fatalf("expected partition key input edit, got %q", got)
+	if got := m.queryFields[queryFieldPartitionValue].value; got != "pk" {
+		t.Fatalf("expected partition key value input edit, got %q", got)
 	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
@@ -71,9 +113,8 @@ func TestQueryRunRequiresExplicitActionFocus(t *testing.T) {
 	m := loadTablesForTest(t)
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	m.queryFields[queryFieldPartitionKey].value = "user_id"
 	m.queryFields[queryFieldPartitionValue].value = "123"
-	m.queryFocus = len(m.queryFields)
+	m.queryFocus = m.queryInputCount()
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	updated, ok := next.(Model)
@@ -123,7 +164,7 @@ func TestQueryFormRemainsCenteredOnResize(t *testing.T) {
 	if got := len(strings.Split(largeView, "\n")); got != 40 {
 		t.Fatalf("expected 40 lines after large resize, got %d", got)
 	}
-	largeIndex := lineIndexContaining(largeView, "Partition Key Name")
+	largeIndex := lineIndexContaining(largeView, "Source:")
 	if largeIndex == -1 {
 		t.Fatalf("missing query form row in large view: %q", largeView)
 	}
@@ -137,7 +178,7 @@ func TestQueryFormRemainsCenteredOnResize(t *testing.T) {
 	if got := len(strings.Split(smallView, "\n")); got != 20 {
 		t.Fatalf("expected 20 lines after small resize, got %d", got)
 	}
-	smallIndex := lineIndexContaining(smallView, "Partition Key Name")
+	smallIndex := lineIndexContaining(smallView, "Source:")
 	if smallIndex == -1 {
 		t.Fatalf("missing query form row in small view: %q", smallView)
 	}

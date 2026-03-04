@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"ddb-explorer/aws"
 	"ddb-explorer/tui/styles"
@@ -68,12 +71,12 @@ var allowedViewStateTransitions = map[viewState]map[viewState]struct{}{
 }
 
 const (
-	queryFieldPartitionKey = iota
-	queryFieldPartitionValue
-	queryFieldSortKey
+	queryFieldPartitionValue = iota
+	queryFieldSortCondition
 	queryFieldSortValue
-	queryFieldIndexName
 )
+
+var querySortKeyConditions = []string{"=", "begins_with", "<", "<=", ">", ">=", "between"}
 
 type queryField struct {
 	label       string
@@ -87,8 +90,16 @@ type queryRequest struct {
 	partitionKey   string
 	partitionValue string
 	sortKey        string
+	condition      string
 	sortValue      string
 	indexName      string
+}
+
+type queryTarget struct {
+	label        string
+	partitionKey string
+	sortKey      string
+	indexName    string
 }
 
 type Model struct {
@@ -106,24 +117,31 @@ type Model struct {
 	pendingQueryRequestID     uint64
 	pendingScanRequestID      uint64
 
-	tableFilter       string
-	filterInputActive bool
-	selectedTable     int
-	activeTable       string
-	queryFields       []queryField
-	queryFocus        int
-	resultItems       []map[string]interface{}
-	resultRawItems    []map[string]interface{}
-	resultColumns     []string
-	resultSelected    int
-	resultPage        int
-	resultOrigin      viewState
-	resultHasMore     bool
-	detailSelected    int
-	detailScroll      int
-	jsonModalOpen     bool
-	jsonModalLines    []string
-	jsonModalScroll   int
+	tableFilter         string
+	filterInputActive   bool
+	selectedTable       int
+	activeTable         string
+	queryFields         []queryField
+	queryFocus          int
+	queryTargets        []queryTarget
+	selectedQueryTarget int
+	resultItems         []map[string]interface{}
+	resultRawItems      []map[string]interface{}
+	resultColumns       []string
+	resultSelected      int
+	resultPage          int
+	resultOrigin        viewState
+	resultHasMore       bool
+	detailSelected      int
+	detailScroll        int
+	jsonModalOpen       bool
+	jsonModalLines      []string
+	jsonModalScroll     int
+	jsonSearchMode      bool
+	jsonSearchInput     string
+	jsonSearchQuery     string
+	jsonSearchMatches   []int
+	jsonSearchCurrent   int
 
 	showHelp bool
 	spinner  spinner.Model
@@ -147,11 +165,9 @@ func NewModel(profile string, client *aws.Client) Model {
 		nextRequestID:             1,
 		pendingTableLoadRequestID: 1,
 		queryFields: []queryField{
-			{label: "Partition Key Name", placeholder: "e.g. account_id", required: true},
 			{label: "Partition Key Value", placeholder: "required value", required: true},
-			{label: "Sort Key Name", placeholder: "optional"},
+			{label: "Sort Key Condition", value: querySortKeyConditions[0], placeholder: "=, begins_with, <, <=, >, >=, between"},
 			{label: "Sort Key Value", placeholder: "optional"},
-			{label: "Index Name", placeholder: "optional GSI/LSI"},
 		},
 		spinner: spin,
 		keys:    defaultKeyMap(),
@@ -180,8 +196,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, m.keys.Global.Quit) {
 			return m, tea.Quit
 		}
+		if m.state == viewStateDetail && m.jsonModalOpen && m.jsonSearchMode && key.Matches(msg, m.keys.Global.Back) {
+			m.jsonSearchMode = false
+			m.status = "closed JSON search"
+			return m, nil
+		}
+		if m.showHelp {
+			if key.Matches(msg, m.keys.Global.Help) || key.Matches(msg, m.keys.Global.Back) {
+				m.showHelp = false
+				m.status = "closed keyboard shortcuts"
+			}
+			return m, nil
+		}
 		if key.Matches(msg, m.keys.Global.Help) {
-			m.showHelp = !m.showHelp
+			m.showHelp = true
+			m.status = "opened keyboard shortcuts"
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Global.Back) {
@@ -308,6 +337,9 @@ func (m Model) View() string {
 	default:
 		content = m.theme.Error.Render("invalid app state")
 	}
+	if m.showHelp {
+		content = m.helpOverlayView()
+	}
 
 	return m.renderChrome(content)
 }
@@ -431,6 +463,8 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 	case viewStateResults:
 		if m.jsonModalOpen {
 			m.jsonModalOpen = false
+			m.jsonSearchMode = false
+			m.jsonSearchInput = ""
 			m.status = "closed JSON modal"
 			return m, nil
 		}
@@ -452,6 +486,8 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 	case viewStateDetail:
 		if m.jsonModalOpen {
 			m.jsonModalOpen = false
+			m.jsonSearchMode = false
+			m.jsonSearchInput = ""
 			m.status = "closed JSON modal"
 			return m, nil
 		}
@@ -534,6 +570,26 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Query.CycleTarget) {
+		if m.cycleQueryTarget(1) {
+			m.status = fmt.Sprintf("query source set to %s", m.currentQueryTargetLabel())
+		}
+		return m, nil
+	}
+
+	if m.queryFocus == queryFieldSortCondition {
+		if key.Matches(msg, m.keys.Query.NextOption) {
+			m.cycleSortCondition(1)
+			m.status = fmt.Sprintf("sort key condition set to %s", m.queryFields[queryFieldSortCondition].value)
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Query.PrevOption) {
+			m.cycleSortCondition(-1)
+			m.status = fmt.Sprintf("sort key condition set to %s", m.queryFields[queryFieldSortCondition].value)
+			return m, nil
+		}
+	}
+
 	if key.Matches(msg, m.keys.Query.SwitchScan) {
 		m.pendingQueryRequestID = 0
 		if err := m.transitionTo(viewStateScan); err != nil {
@@ -554,7 +610,7 @@ func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.Query.Submit) {
-		if m.queryFocus < len(m.queryFields) {
+		if m.queryFocus < m.queryInputCount() {
 			m.shiftQueryFocus(1)
 			m.status = fmt.Sprintf("focused %s", m.queryFocusLabel())
 			return m, nil
@@ -575,7 +631,7 @@ func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, runQueryCmd(m.client, request, requestID)
 	}
 
-	if m.queryFocus >= len(m.queryFields) {
+	if m.queryFocus >= m.queryInputCount() {
 		return m, nil
 	}
 
@@ -636,9 +692,32 @@ func (m Model) updateResultsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.jsonModalOpen {
+		if m.jsonSearchMode {
+			return m.updateJSONSearchInput(msg), nil
+		}
+		if key.Matches(msg, m.keys.Detail.SaveItem) {
+			path, err := m.saveSelectedResultRawItemToCurrentDir()
+			if err != nil {
+				m.status = err.Error()
+				m.err = err
+				return m, nil
+			}
+
+			m.status = fmt.Sprintf("saved item JSON to %s", path)
+			m.err = nil
+			return m, nil
+		}
 		if key.Matches(msg, m.keys.Detail.OpenJSON) {
 			m.jsonModalOpen = false
+			m.jsonSearchMode = false
+			m.jsonSearchInput = ""
 			m.status = "closed JSON modal"
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.Detail.Search) {
+			m.jsonSearchMode = true
+			m.jsonSearchInput = m.jsonSearchQuery
+			m.status = "search JSON"
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.Detail.MoveUp) {
@@ -676,6 +755,18 @@ func (m Model) updateDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m.err = nil
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Detail.SaveItem) {
+		path, err := m.saveSelectedResultRawItemToCurrentDir()
+		if err != nil {
+			m.status = err.Error()
+			m.err = err
+			return m, nil
+		}
+
+		m.status = fmt.Sprintf("saved item JSON to %s", path)
 		m.err = nil
 		return m, nil
 	}
@@ -779,32 +870,25 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) error {
 	m.jsonModalOpen = false
 	m.jsonModalLines = nil
 	m.jsonModalScroll = 0
+	m.queryTargets = buildQueryTargets(table)
+	m.selectedQueryTarget = 0
 	m.queryFields = []queryField{
-		{
-			label:       "Partition Key Name",
-			value:       table.PartitionKey,
-			placeholder: "e.g. account_id",
-			required:    true,
-		},
 		{
 			label:       "Partition Key Value",
 			placeholder: "required value",
 			required:    true,
 		},
 		{
-			label:       "Sort Key Name",
-			value:       table.SortKey,
-			placeholder: "optional",
+			label:       "Sort Key Condition",
+			value:       querySortKeyConditions[0],
+			placeholder: "=, begins_with, <, <=, >, >=, between",
 		},
 		{
 			label:       "Sort Key Value",
 			placeholder: "optional",
 		},
-		{
-			label:       "Index Name",
-			placeholder: "optional GSI/LSI",
-		},
 	}
+	m.refreshQueryFieldLabels()
 	m.queryFocus = 0
 
 	return nil
@@ -822,7 +906,7 @@ func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origi
 		m.resultRawItems = make([]map[string]interface{}, len(result.Items))
 		copy(m.resultRawItems, result.Items)
 	}
-	m.resultColumns = discoverResultColumns(result.Items)
+	m.resultColumns = m.discoverResultColumnsForOrigin(result.Items, origin)
 	m.resultSelected = 0
 	m.resultPage = 0
 	m.resultOrigin = origin
@@ -858,8 +942,68 @@ func discoverResultColumns(items []map[string]interface{}) []string {
 	return columns
 }
 
+func (m Model) discoverResultColumnsForOrigin(items []map[string]interface{}, _ viewState) []string {
+	columns := discoverResultColumns(items)
+	filtered := make([]string, 0, len(columns))
+	for _, column := range columns {
+		if strings.HasPrefix(strings.ToUpper(column), "GSI") {
+			continue
+		}
+		filtered = append(filtered, column)
+	}
+
+	if len(filtered) == 0 {
+		return columns
+	}
+
+	return filtered
+}
+
+func (m Model) chromeContentHeight() int {
+	renderHeight := m.height
+	if renderHeight < 4 {
+		renderHeight = 4
+	}
+
+	contentHeight := renderHeight - 3
+	if contentHeight < 1 {
+		return 1
+	}
+
+	return contentHeight
+}
+
+func (m Model) stretchedPanelSize() (int, int) {
+	panelWidth := m.width - 4
+	if panelWidth < 32 {
+		panelWidth = 32
+	}
+
+	panelHeight := m.chromeContentHeight()
+	if panelHeight < 10 {
+		panelHeight = 10
+	}
+
+	return panelWidth, panelHeight
+}
+
+func (m Model) stretchedPanelContentSize() (int, int) {
+	panelWidth, panelHeight := m.stretchedPanelSize()
+	contentWidth := panelWidth - m.theme.Panel.GetHorizontalFrameSize()
+	contentHeight := panelHeight - m.theme.Panel.GetVerticalFrameSize()
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	return contentWidth, contentHeight
+}
+
 func (m Model) resultPageSize() int {
-	pageSize := m.height - 18
+	_, contentHeight := m.stretchedPanelContentSize()
+	pageSize := contentHeight - 7
 	if pageSize < 1 {
 		return 1
 	}
@@ -1000,7 +1144,7 @@ func (m Model) resultsPaginationStatus() string {
 }
 
 func (m *Model) shiftQueryFocus(delta int) {
-	max := len(m.queryFields)
+	max := m.queryInputCount()
 	if max < 0 {
 		max = 0
 	}
@@ -1014,6 +1158,147 @@ func (m *Model) shiftQueryFocus(delta int) {
 	}
 
 	m.queryFocus = next
+}
+
+func buildQueryTargets(table aws.TableInfo) []queryTarget {
+	targets := []queryTarget{{
+		label:        "Table",
+		partitionKey: table.PartitionKey,
+		sortKey:      table.SortKey,
+	}}
+
+	for _, gsi := range table.GSIKeys {
+		targets = append(targets, queryTarget{
+			label:        "GSI: " + gsi.Name,
+			partitionKey: gsi.PartitionKey,
+			sortKey:      gsi.SortKey,
+			indexName:    gsi.Name,
+		})
+	}
+
+	return targets
+}
+
+func (m Model) currentQueryTarget() (queryTarget, bool) {
+	if len(m.queryTargets) == 0 {
+		return queryTarget{}, false
+	}
+
+	index := m.selectedQueryTarget
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(m.queryTargets) {
+		index = len(m.queryTargets) - 1
+	}
+
+	return m.queryTargets[index], true
+}
+
+func (m Model) currentQueryTargetLabel() string {
+	target, ok := m.currentQueryTarget()
+	if !ok {
+		return "(none)"
+	}
+
+	if target.sortKey == "" {
+		return fmt.Sprintf("%s [%s]", target.label, target.partitionKey)
+	}
+
+	return fmt.Sprintf("%s [%s, %s]", target.label, target.partitionKey, target.sortKey)
+}
+
+func (m *Model) cycleQueryTarget(delta int) bool {
+	if len(m.queryTargets) <= 1 {
+		return false
+	}
+
+	next := m.selectedQueryTarget + delta
+	if next < 0 {
+		next = len(m.queryTargets) - 1
+	}
+	if next >= len(m.queryTargets) {
+		next = 0
+	}
+
+	m.selectedQueryTarget = next
+	m.refreshQueryFieldLabels()
+	return true
+}
+
+func (m *Model) refreshQueryFieldLabels() {
+	target, ok := m.currentQueryTarget()
+	if !ok || len(m.queryFields) <= queryFieldSortValue {
+		return
+	}
+
+	m.queryFields[queryFieldPartitionValue].label = fmt.Sprintf("%s Value", target.partitionKey)
+	m.queryFields[queryFieldPartitionValue].placeholder = fmt.Sprintf("value for %s", target.partitionKey)
+
+	if target.sortKey == "" {
+		m.queryFields[queryFieldSortCondition].label = "Sort Key Condition"
+		m.queryFields[queryFieldSortValue].label = "Sort Key Value"
+		m.queryFields[queryFieldSortValue].placeholder = "selected source has no sort key"
+		m.queryFields[queryFieldSortValue].value = ""
+		return
+	}
+
+	m.queryFields[queryFieldSortCondition].label = fmt.Sprintf("%s Condition", target.sortKey)
+	m.queryFields[queryFieldSortValue].label = fmt.Sprintf("%s Value", target.sortKey)
+	m.queryFields[queryFieldSortValue].placeholder = fmt.Sprintf("optional value for %s", target.sortKey)
+}
+
+func (m Model) queryInputCount() int {
+	target, ok := m.currentQueryTarget()
+	if !ok {
+		return 1
+	}
+	if target.sortKey == "" {
+		return 1
+	}
+
+	return len(m.queryFields)
+}
+
+func sortConditionIndex(condition string) int {
+	for idx, value := range querySortKeyConditions {
+		if value == condition {
+			return idx
+		}
+	}
+
+	return 0
+}
+
+func isValidSortCondition(condition string) bool {
+	for _, value := range querySortKeyConditions {
+		if value == condition {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (m *Model) cycleSortCondition(delta int) {
+	target, ok := m.currentQueryTarget()
+	if !ok || target.sortKey == "" {
+		return
+	}
+	if len(m.queryFields) <= queryFieldSortCondition {
+		return
+	}
+
+	current := sortConditionIndex(m.queryFields[queryFieldSortCondition].value)
+	next := current + delta
+	if next < 0 {
+		next = len(querySortKeyConditions) - 1
+	}
+	if next >= len(querySortKeyConditions) {
+		next = 0
+	}
+
+	m.queryFields[queryFieldSortCondition].value = querySortKeyConditions[next]
 }
 
 func (m *Model) openSelectedResultDetail() error {
@@ -1065,13 +1350,13 @@ func (m Model) selectedResultItems() (map[string]interface{}, map[string]interfa
 }
 
 func (m Model) selectedResultKeys() []string {
-	item, _, ok := m.selectedResultItems()
+	_, rawItem, ok := m.selectedResultItems()
 	if !ok {
 		return nil
 	}
 
-	keys := make([]string, 0, len(item))
-	for key := range item {
+	keys := make([]string, 0, len(rawItem))
+	for key := range rawItem {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -1079,7 +1364,8 @@ func (m Model) selectedResultKeys() []string {
 }
 
 func (m Model) detailPageSize() int {
-	pageSize := m.height - 18
+	_, contentHeight := m.stretchedPanelContentSize()
+	pageSize := contentHeight - 6
 	if pageSize < 3 {
 		return 3
 	}
@@ -1161,6 +1447,11 @@ func (m *Model) openJSONModal() error {
 	}
 	m.jsonModalScroll = 0
 	m.jsonModalOpen = true
+	m.jsonSearchMode = false
+	m.jsonSearchInput = ""
+	m.jsonSearchQuery = ""
+	m.jsonSearchMatches = nil
+	m.jsonSearchCurrent = -1
 	m.clampJSONModalViewport()
 	m.status = fmt.Sprintf("opened JSON modal for row %d", m.resultSelected+1)
 
@@ -1213,8 +1504,154 @@ func (m *Model) moveJSONModalScroll(delta int) {
 	m.status = fmt.Sprintf("JSON lines %d-%d of %d", m.jsonModalScroll+1, end, len(m.jsonModalLines))
 }
 
+func (m Model) updateJSONSearchInput(msg tea.KeyMsg) Model {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.jsonSearchMode = false
+		m.status = "closed JSON search"
+		return m
+	case tea.KeyEnter:
+		return m.executeJSONSearch()
+	case tea.KeyBackspace, tea.KeyDelete:
+		runes := []rune(m.jsonSearchInput)
+		if len(runes) > 0 {
+			m.jsonSearchInput = string(runes[:len(runes)-1])
+		}
+		m.status = fmt.Sprintf("search JSON: %s", m.jsonSearchInput)
+		return m
+	case tea.KeyRunes:
+		m.jsonSearchInput += string(msg.Runes)
+		m.status = fmt.Sprintf("search JSON: %s", m.jsonSearchInput)
+		return m
+	default:
+		return m
+	}
+}
+
+func (m Model) executeJSONSearch() Model {
+	query := strings.TrimSpace(m.jsonSearchInput)
+	if query == "" {
+		m.status = "search query is empty"
+		m.jsonSearchMode = false
+		return m
+	}
+
+	loweredQuery := strings.ToLower(query)
+	matches := make([]int, 0)
+	for idx, line := range m.jsonModalLines {
+		if strings.Contains(strings.ToLower(line), loweredQuery) {
+			matches = append(matches, idx)
+		}
+	}
+
+	m.jsonSearchQuery = query
+	m.jsonSearchInput = query
+	m.jsonSearchMatches = matches
+	m.jsonSearchCurrent = -1
+	m.jsonSearchMode = false
+
+	if len(matches) == 0 {
+		m.status = fmt.Sprintf("no JSON matches for %q", query)
+		return m
+	}
+
+	current := 0
+	for idx, matchLine := range matches {
+		if matchLine >= m.jsonModalScroll {
+			current = idx
+			break
+		}
+	}
+	m.jsonSearchCurrent = current
+	m.focusJSONMatch(current)
+
+	targetLine := matches[current]
+	m.status = fmt.Sprintf("JSON match %d/%d at line %d", current+1, len(matches), targetLine+1)
+	return m
+}
+
+func (m *Model) focusJSONMatch(matchIndex int) {
+	if len(m.jsonSearchMatches) == 0 {
+		return
+	}
+	if matchIndex < 0 {
+		matchIndex = 0
+	}
+	if matchIndex >= len(m.jsonSearchMatches) {
+		matchIndex = len(m.jsonSearchMatches) - 1
+	}
+
+	line := m.jsonSearchMatches[matchIndex]
+	scroll := line - (m.jsonModalPageSize() / 2)
+	if scroll < 0 {
+		scroll = 0
+	}
+	m.jsonModalScroll = scroll
+	m.clampJSONModalViewport()
+}
+
+func sanitizeFileToken(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return "item"
+	}
+
+	var builder strings.Builder
+	for _, r := range trimmed {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			builder.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+
+	result := strings.Trim(builder.String(), "-._")
+	if result == "" {
+		return "item"
+	}
+
+	return result
+}
+
+func (m Model) saveSelectedResultRawItemToCurrentDir() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve current directory: %w", err)
+	}
+
+	return m.saveSelectedResultRawItemToDir(dir)
+}
+
+func (m Model) saveSelectedResultRawItemToDir(dir string) (string, error) {
+	_, rawItem, ok := m.selectedResultItems()
+	if !ok {
+		return "", errors.New("no rows available")
+	}
+
+	payload, err := json.MarshalIndent(rawItem, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal item JSON: %w", err)
+	}
+
+	tableToken := sanitizeFileToken(m.activeTable)
+	if tableToken == "" {
+		tableToken = "table"
+	}
+
+	filename := fmt.Sprintf("%s-row-%d-%s.json", tableToken, m.resultSelected+1, time.Now().Format("20060102-150405"))
+	path := filepath.Join(dir, filename)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return "", fmt.Errorf("write item JSON to %s: %w", path, err)
+	}
+
+	return path, nil
+}
+
 func (m Model) queryFocusLabel() string {
-	if m.queryFocus >= len(m.queryFields) {
+	if m.queryFocus >= m.queryInputCount() {
 		return "Run Query"
 	}
 
@@ -1222,7 +1659,10 @@ func (m Model) queryFocusLabel() string {
 }
 
 func (m *Model) updateQueryInput(msg tea.KeyMsg) bool {
-	if m.queryFocus < 0 || m.queryFocus >= len(m.queryFields) {
+	if m.queryFocus < 0 || m.queryFocus >= m.queryInputCount() {
+		return false
+	}
+	if m.queryFocus == queryFieldSortCondition {
 		return false
 	}
 
@@ -1247,18 +1687,19 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 	if m.activeTable == "" {
 		return queryRequest{}, errors.New("no table selected")
 	}
-
-	if len(m.queryFields) <= queryFieldIndexName {
+	target, ok := m.currentQueryTarget()
+	if !ok {
 		return queryRequest{}, errors.New("query form is not initialized")
 	}
 
 	request := queryRequest{
 		tableName:      m.activeTable,
-		partitionKey:   strings.TrimSpace(m.queryFields[queryFieldPartitionKey].value),
+		partitionKey:   strings.TrimSpace(target.partitionKey),
 		partitionValue: strings.TrimSpace(m.queryFields[queryFieldPartitionValue].value),
-		sortKey:        strings.TrimSpace(m.queryFields[queryFieldSortKey].value),
+		sortKey:        strings.TrimSpace(target.sortKey),
+		condition:      strings.TrimSpace(m.queryFields[queryFieldSortCondition].value),
 		sortValue:      strings.TrimSpace(m.queryFields[queryFieldSortValue].value),
-		indexName:      strings.TrimSpace(m.queryFields[queryFieldIndexName].value),
+		indexName:      strings.TrimSpace(target.indexName),
 	}
 
 	if request.partitionKey == "" {
@@ -1268,10 +1709,20 @@ func (m Model) buildQueryRequest() (queryRequest, error) {
 		return queryRequest{}, errors.New("partition key value is required")
 	}
 
-	hasSortKey := request.sortKey != ""
-	hasSortValue := request.sortValue != ""
-	if hasSortKey != hasSortValue {
-		return queryRequest{}, errors.New("sort key name and value must both be set or both be empty")
+	if request.sortKey == "" {
+		request.sortValue = ""
+		request.condition = querySortKeyConditions[0]
+		return request, nil
+	}
+
+	if strings.TrimSpace(request.sortValue) == "" {
+		request.sortValue = ""
+		request.condition = querySortKeyConditions[0]
+		request.sortKey = ""
+		return request, nil
+	}
+	if !isValidSortCondition(request.condition) {
+		return queryRequest{}, fmt.Errorf("invalid sort key condition %q", request.condition)
 	}
 
 	return request, nil
@@ -1289,7 +1740,7 @@ func runQueryCmd(client *aws.Client, request queryRequest, requestID uint64) tea
 			request.partitionValue,
 			request.sortKey,
 			request.sortValue,
-			"=",
+			request.condition,
 			request.indexName,
 			nil,
 		)

@@ -76,8 +76,8 @@ func TestResultsKeyboardNavigationMovesRowsAndPages(t *testing.T) {
 	if m.resultPage != 1 {
 		t.Fatalf("expected page 1 after next-page key, got %d", m.resultPage)
 	}
-	if m.resultSelected < 4 || m.resultSelected > 7 {
-		t.Fatalf("expected selection to move into page 2 range, got row %d", m.resultSelected)
+	if m.resultSelected != 10 {
+		t.Fatalf("expected selection to preserve in-page offset on next page, got row %d", m.resultSelected)
 	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
@@ -124,7 +124,42 @@ func TestResultsViewRemainsCenteredOnResize(t *testing.T) {
 		t.Fatalf("missing results title in small render: %q", smallView)
 	}
 
-	if largeIndex <= smallIndex {
-		t.Fatalf("expected results content to move lower on taller viewport: large=%d small=%d", largeIndex, smallIndex)
+	if largeIndex != smallIndex {
+		t.Fatalf("expected stretched results content to stay top-aligned across sizes: large=%d small=%d", largeIndex, smallIndex)
 	}
+}
+
+func TestResultsColumnsExcludeAnyGSIPrefixedField(t *testing.T) {
+	m := NewModel("dev", nil)
+	m.state = viewStateResults
+
+	result := aws.QueryResult{Items: []map[string]interface{}{{
+		"gsi_pk":        "active",
+		"GSI_secondary": "secondary",
+		"gsi_sk":        "2026-03-04",
+		"pk":            "tenant-1",
+		"sk":            "contract-1",
+		"status":        "OPEN",
+		"name":          "Sample",
+	}}}
+	columns := m.discoverResultColumnsForOrigin(result.Items, viewStateScan)
+
+	for _, column := range columns {
+		if strings.HasPrefix(strings.ToUpper(column), "GSI") {
+			t.Fatalf("expected GSI-prefixed fields to be filtered out, got columns %v", columns)
+		}
+	}
+	if !containsString(columns, "status") {
+		t.Fatalf("expected non-GSI columns to remain, got %v", columns)
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+
+	return false
 }

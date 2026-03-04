@@ -30,10 +30,13 @@ type TableListKeyMap struct {
 }
 
 type QueryKeyMap struct {
-	NextField  key.Binding
-	PrevField  key.Binding
-	Submit     key.Binding
-	SwitchScan key.Binding
+	NextField   key.Binding
+	PrevField   key.Binding
+	NextOption  key.Binding
+	PrevOption  key.Binding
+	CycleTarget key.Binding
+	Submit      key.Binding
+	SwitchScan  key.Binding
 }
 
 type ScanKeyMap struct {
@@ -54,6 +57,8 @@ type DetailKeyMap struct {
 	NextPage key.Binding
 	PrevPage key.Binding
 	OpenJSON key.Binding
+	SaveItem key.Binding
+	Search   key.Binding
 }
 
 func defaultKeyMap() KeyMap {
@@ -102,6 +107,18 @@ func defaultKeyMap() KeyMap {
 			PrevField: key.NewBinding(
 				key.WithKeys("shift+tab"),
 				key.WithHelp("shift+tab", "prev field"),
+			),
+			NextOption: key.NewBinding(
+				key.WithKeys("right", "]"),
+				key.WithHelp("right/]", "next option"),
+			),
+			PrevOption: key.NewBinding(
+				key.WithKeys("left", "["),
+				key.WithHelp("left/[", "prev option"),
+			),
+			CycleTarget: key.NewBinding(
+				key.WithKeys("ctrl+g"),
+				key.WithHelp("ctrl+g", "next key source"),
 			),
 			Submit: key.NewBinding(
 				key.WithKeys("enter"),
@@ -161,11 +178,37 @@ func defaultKeyMap() KeyMap {
 				key.WithKeys("enter"),
 				key.WithHelp("enter", "toggle JSON modal"),
 			),
+			SaveItem: key.NewBinding(
+				key.WithKeys("s"),
+				key.WithHelp("s", "save item JSON"),
+			),
+			Search: key.NewBinding(
+				key.WithKeys("/"),
+				key.WithHelp("/", "search JSON"),
+			),
 		},
 	}
 }
 
 func (k KeyMap) HelpText(state viewState) string {
+	return strings.Join(k.HelpLines(state), " | ")
+}
+
+func (k KeyMap) HelpLines(state viewState) []string {
+	if state == viewStateQuery {
+		return []string{
+			"q: quit",
+			"esc: back",
+			"ctrl+h: toggle help",
+			"ctrl+g: next key source",
+			"enter: run query",
+			"ctrl+s: switch to scan",
+			"[ / ]: sort cond",
+			"tab: next field",
+			"shift+tab: prev field",
+		}
+	}
+
 	bindings := make([]key.Binding, 0, 8)
 	bindings = append(bindings, k.globalBindings()...)
 	bindings = append(bindings, k.stateBindings(state)...)
@@ -179,7 +222,7 @@ func (k KeyMap) HelpText(state viewState) string {
 		parts = append(parts, help.Key+": "+help.Desc)
 	}
 
-	return strings.Join(parts, " | ")
+	return parts
 }
 
 func (k KeyMap) globalBindings() []key.Binding {
@@ -200,6 +243,9 @@ func (k KeyMap) stateBindings(state viewState) []key.Binding {
 		return []key.Binding{
 			k.Query.NextField,
 			k.Query.PrevField,
+			k.Query.NextOption,
+			k.Query.PrevOption,
+			k.Query.CycleTarget,
 			k.Query.Submit,
 			k.Query.SwitchScan,
 		}
@@ -222,6 +268,8 @@ func (k KeyMap) stateBindings(state viewState) []key.Binding {
 			k.Detail.NextPage,
 			k.Detail.PrevPage,
 			k.Detail.OpenJSON,
+			k.Detail.SaveItem,
+			k.Detail.Search,
 		}
 	default:
 		return nil

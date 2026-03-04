@@ -1,0 +1,167 @@
+{
+  "HK": "6920448c1b2b9eec2282bd77",
+  "SK": "additional-network#692044bf2882ff7a17091867",
+  "_id": "692044bf2882ff7a17091867",
+  "calenderMax": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "callCenterPhoneNumber": "+18555777099",
+  "coInsurance": {
+    "text": "30"
+  },
+  "conditions": {
+    "locations": null
+  },
+  "deductible": {
+    "family": {
+      "text": "20"
+    },
+    "individual": {
+      "text": "100"
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "tieredFamily": {
+      "text": null
+    },
+    "tieredIndividual": {
+      "text": null
+    },
+    "tieredIndividualUnderFamily": {
+      "text": null
+    }
+  },
+  "dentalMax": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "id": "692044bf2882ff7a17091867",
+  "insuranceCompany": "61da13490bfd59629d75c288",
+  "isPreferredTier": null,
+  "name": "Call Aither",
+  "orthodonticsMax": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "outOfPocketMax": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "paymentLimit": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": "40"
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "providerNetworkType": "CALL_CENTER",
+  "rxDeductible": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "rxOutOfPocketMax": {
+    "family": {
+      "text": null
+    },
+    "individual": {
+      "text": null
+    },
+    "individualPlusOne": {
+      "text": null
+    },
+    "individualPlusSpouse": {
+      "text": null
+    },
+    "notes": null,
+    "tieredFamily": {},
+    "tieredIndividual": {},
+    "tieredIndividualUnderFamily": {}
+  },
+  "title": "Call Aither",
+  "updatedAt": 1772623860925
+}

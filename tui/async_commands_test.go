@@ -67,9 +67,8 @@ func TestRunScanCmdReturnsTypedNilClientError(t *testing.T) {
 func TestStaleQueryResponseIgnoredAfterSwitchingFlow(t *testing.T) {
 	m := loadTablesForTest(t)
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m.queryFields[queryFieldPartitionKey].value = "account_id"
 	m.queryFields[queryFieldPartitionValue].value = "acc-1"
-	m.queryFocus = len(m.queryFields)
+	m.queryFocus = m.queryInputCount()
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -113,9 +112,8 @@ func TestStaleQueryResponseIgnoredAfterSwitchingFlow(t *testing.T) {
 func TestQueryErrorIsRecoverableInQueryView(t *testing.T) {
 	m := loadTablesForTest(t)
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	m.queryFields[queryFieldPartitionKey].value = "account_id"
 	m.queryFields[queryFieldPartitionValue].value = "acc-1"
-	m.queryFocus = len(m.queryFields)
+	m.queryFocus = m.queryInputCount()
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {

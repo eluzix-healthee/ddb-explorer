@@ -98,11 +98,11 @@ func TestResizeRecalculatesResultsAndModalViewports(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if resized.resultPageSize() != 4 {
-		t.Fatalf("expected result page size 4 at height 22, got %d", resized.resultPageSize())
+	if resized.resultPageSize() != 8 {
+		t.Fatalf("expected result page size 8 at height 22, got %d", resized.resultPageSize())
 	}
-	if resized.resultPage != 3 {
-		t.Fatalf("expected result page 3 for selected row 16, got %d", resized.resultPage)
+	if resized.resultPage != 1 {
+		t.Fatalf("expected result page 1 for selected row 16, got %d", resized.resultPage)
 	}
 
 	next, _ = resized.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
@@ -110,11 +110,11 @@ func TestResizeRecalculatesResultsAndModalViewports(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Model, got %T", next)
 	}
-	if resized.resultPageSize() != 2 {
-		t.Fatalf("expected result page size 2 at height 20, got %d", resized.resultPageSize())
+	if resized.resultPageSize() != 6 {
+		t.Fatalf("expected result page size 6 at height 20, got %d", resized.resultPageSize())
 	}
-	if resized.resultPage != 7 {
-		t.Fatalf("expected result page 7 after second resize, got %d", resized.resultPage)
+	if resized.resultPage != 2 {
+		t.Fatalf("expected result page 2 after second resize, got %d", resized.resultPage)
 	}
 
 	resized = sendKey(t, resized, tea.KeyMsg{Type: tea.KeyEnter})
@@ -181,7 +181,7 @@ func TestPrimaryViewsAndModalRemainCentered(t *testing.T) {
 	assertCentered(t, tablesModel, "Filter:")
 
 	queryModel := sendKey(t, loadTablesForTest(t), tea.KeyMsg{Type: tea.KeyEnter})
-	assertCentered(t, queryModel, "Partition Key Name")
+	assertCentered(t, queryModel, "Source:")
 
 	scanModel := sendKey(t, queryModel, tea.KeyMsg{Type: tea.KeyCtrlS})
 	assertCentered(t, scanModel, "Scan uses the selected table")
@@ -193,10 +193,47 @@ func TestPrimaryViewsAndModalRemainCentered(t *testing.T) {
 	}}}, viewStateQuery); err != nil {
 		t.Fatalf("expected results view entry, got error: %v", err)
 	}
-	assertCentered(t, resultsModel, "Results")
+	largeModel, _ := resultsModel.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	large, ok := largeModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", largeModel)
+	}
+	largeIndex := lineIndexContaining(large.View(), "Results")
+	if largeIndex == -1 {
+		t.Fatalf("expected marker %q in large results view", "Results")
+	}
+	smallModel, _ := large.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	small, ok := smallModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", smallModel)
+	}
+	smallIndex := lineIndexContaining(small.View(), "Results")
+	if smallIndex == -1 {
+		t.Fatalf("expected marker %q in small results view", "Results")
+	}
 
 	detailModel := sendKey(t, resultsModel, tea.KeyMsg{Type: tea.KeyEnter})
-	assertCentered(t, detailModel, "Item Detail")
+	largeDetailModel, _ := detailModel.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	largeDetail, ok := largeDetailModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", largeDetailModel)
+	}
+	largeDetailIndex := lineIndexContaining(largeDetail.View(), "Item Detail")
+	if largeDetailIndex == -1 {
+		t.Fatalf("expected marker %q in large detail view", "Item Detail")
+	}
+	smallDetailModel, _ := largeDetail.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	smallDetail, ok := smallDetailModel.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", smallDetailModel)
+	}
+	smallDetailIndex := lineIndexContaining(smallDetail.View(), "Item Detail")
+	if smallDetailIndex == -1 {
+		t.Fatalf("expected marker %q in small detail view", "Item Detail")
+	}
+	if largeDetailIndex != smallDetailIndex {
+		t.Fatalf("expected stretched detail content to stay top-aligned across sizes: large=%d small=%d", largeDetailIndex, smallDetailIndex)
+	}
 
 	modalModel := sendKey(t, detailModel, tea.KeyMsg{Type: tea.KeyEnter})
 	assertCentered(t, modalModel, "Raw JSON Modal")

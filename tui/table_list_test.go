@@ -73,9 +73,9 @@ func loadTablesForTest(t *testing.T) Model {
 
 	m := NewModel("dev", nil)
 	tables := []aws.TableInfo{
-		{Name: "orders", Status: "ACTIVE", ItemCount: 10, SizeBytes: 1_200},
-		{Name: "ops-audit", Status: "ACTIVE", ItemCount: 5, SizeBytes: 3_400},
-		{Name: "users", Status: "ACTIVE", ItemCount: 7, SizeBytes: 9_100},
+		{Name: "orders", Status: "ACTIVE", ItemCount: 10, SizeBytes: 1_200, PartitionKey: "account_id", SortKey: "created_at"},
+		{Name: "ops-audit", Status: "ACTIVE", ItemCount: 5, SizeBytes: 3_400, PartitionKey: "tenant_id", SortKey: "timestamp"},
+		{Name: "users", Status: "ACTIVE", ItemCount: 7, SizeBytes: 9_100, PartitionKey: "org_id", SortKey: "user_id"},
 	}
 
 	next, _ := m.Update(tableLoadSuccessMsg{requestID: m.pendingTableLoadRequestID, tables: tables})

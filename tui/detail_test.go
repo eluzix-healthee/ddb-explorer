@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,5 +142,164 @@ func TestJSONModalRemainsCenteredOnResize(t *testing.T) {
 
 	if largeIndex <= smallIndex {
 		t.Fatalf("expected modal to move lower on taller viewport: large=%d small=%d", largeIndex, smallIndex)
+	}
+}
+
+func TestDetailViewClampsLargeValuesToViewport(t *testing.T) {
+	m := NewModel("dev", nil)
+	m.height = 20
+	largeValue := strings.Repeat("x", 1200)
+
+	if err := m.enterResultsView("orders", aws.QueryResult{
+		Items: []map[string]interface{}{{
+			"account_id": "acc-1",
+			"payload":    largeValue,
+			"status":     "OPEN",
+		}},
+		RawItems: []map[string]interface{}{{
+			"account_id": "acc-1",
+			"payload":    largeValue,
+			"status":     "OPEN",
+		}},
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	view := m.View()
+	if got := len(strings.Split(view, "\n")); got != m.height {
+		t.Fatalf("expected detail view to stay within viewport height %d, got %d", m.height, got)
+	}
+	if !strings.Contains(view, "…") {
+		t.Fatalf("expected truncated marker for oversized detail value, got %q", view)
+	}
+}
+
+func TestSaveSelectedItemWritesJSONFile(t *testing.T) {
+	m := NewModel("dev", nil)
+	if err := m.enterResultsView("orders", aws.QueryResult{
+		Items: []map[string]interface{}{{
+			"account_id": "acc-1",
+			"status":     "OPEN",
+		}},
+		RawItems: []map[string]interface{}{{
+			"account_id": "acc-1",
+			"status":     "OPEN",
+		}},
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	dir := t.TempDir()
+	path, err := m.saveSelectedResultRawItemToDir(dir)
+	if err != nil {
+		t.Fatalf("expected save to succeed, got %v", err)
+	}
+
+	if filepath.Dir(path) != dir {
+		t.Fatalf("expected file in temp dir %q, got %q", dir, path)
+	}
+	if !strings.HasSuffix(path, ".json") {
+		t.Fatalf("expected JSON file suffix, got %q", path)
+	}
+
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected to read saved file, got %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("expected valid JSON payload, got %v", err)
+	}
+	if decoded["account_id"] != "acc-1" {
+		t.Fatalf("expected saved account_id acc-1, got %v", decoded["account_id"])
+	}
+}
+
+func TestSaveKeyWorksInDetailAndJSONModal(t *testing.T) {
+	m := NewModel("dev", nil)
+	if err := m.enterResultsView("orders", aws.QueryResult{
+		Items: []map[string]interface{}{{"account_id": "acc-1"}},
+		RawItems: []map[string]interface{}{{
+			"account_id": "acc-1",
+			"payload":    map[string]interface{}{"status": "OPEN"},
+		}},
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("resolve working directory: %v", err)
+	}
+	tempWD := t.TempDir()
+	if err := os.Chdir(tempWD); err != nil {
+		t.Fatalf("switch to temp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !strings.Contains(m.status, "saved item JSON to") {
+		t.Fatalf("expected save status in detail view, got %q", m.status)
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.jsonModalOpen {
+		t.Fatal("expected JSON modal to open")
+	}
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	if !strings.Contains(m.status, "saved item JSON to") {
+		t.Fatalf("expected save status in JSON modal, got %q", m.status)
+	}
+}
+
+func TestJSONModalSearchFindsAndFocusesMatch(t *testing.T) {
+	m := NewModel("dev", nil)
+	m.height = 20
+
+	lines := make([]interface{}, 0, 30)
+	for idx := 0; idx < 30; idx++ {
+		value := fmt.Sprintf("line-%02d", idx)
+		if idx == 24 {
+			value = "needle-target-value"
+		}
+		lines = append(lines, value)
+	}
+
+	if err := m.enterResultsView("orders", aws.QueryResult{
+		Items:    []map[string]interface{}{{"payload": "[...]"}},
+		RawItems: []map[string]interface{}{{"payload": lines}},
+	}, viewStateQuery); err != nil {
+		t.Fatalf("expected results view entry, got error: %v", err)
+	}
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if !m.jsonSearchMode {
+		t.Fatal("expected JSON search mode to open with '/'")
+	}
+
+	for _, r := range []rune("needle") {
+		m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.jsonSearchMode {
+		t.Fatal("expected JSON search mode to close after Enter")
+	}
+	if len(m.jsonSearchMatches) == 0 {
+		t.Fatal("expected at least one JSON search match")
+	}
+	if m.jsonModalScroll == 0 {
+		t.Fatal("expected JSON modal scroll to move toward the match")
+	}
+	if !strings.Contains(m.status, "JSON match") {
+		t.Fatalf("expected JSON match status, got %q", m.status)
 	}
 }

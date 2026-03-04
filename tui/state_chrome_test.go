@@ -60,7 +60,7 @@ func TestChromeRendersHelpAndStatusAcrossViews(t *testing.T) {
 	}
 }
 
-func TestHelpToggleExpandsStateSpecificHelpInChrome(t *testing.T) {
+func TestHelpToggleOpensShortcutsOverlay(t *testing.T) {
 	m := loadTablesForTest(t)
 	m.width = 120
 	m.height = 24
@@ -71,11 +71,33 @@ func TestHelpToggleExpandsStateSpecificHelpInChrome(t *testing.T) {
 	}
 
 	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlH})
-	expandedView := m.View()
-	required := []string{"q: quit", "esc: back", "ctrl+h: toggle help", "/: filter", "enter: open query/scan"}
+	overlayView := m.View()
+	required := []string{"Keyboard Shortcuts", "q: quit", "esc: back", "ctrl+h: toggle help", "/: filter", "enter: open query/scan"}
 	for _, token := range required {
-		if !strings.Contains(expandedView, token) {
-			t.Fatalf("expected expanded help to include %q", token)
+		if !strings.Contains(overlayView, token) {
+			t.Fatalf("expected help overlay to include %q", token)
+		}
+	}
+
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	closedView := m.View()
+	if !strings.Contains(closedView, "Press Ctrl+H for shortcuts") {
+		t.Fatalf("expected compact help prompt after closing overlay, got %q", closedView)
+	}
+}
+
+func TestQueryHelpIncludesSortConditionControl(t *testing.T) {
+	m := loadTablesForTest(t)
+	m.width = 160
+	m.height = 24
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = sendKey(t, m, tea.KeyMsg{Type: tea.KeyCtrlH})
+
+	view := m.View()
+	required := []string{"[ / ]: sort cond", "enter: run query", "ctrl+s: switch to scan"}
+	for _, token := range required {
+		if !strings.Contains(view, token) {
+			t.Fatalf("expected query help to include %q", token)
 		}
 	}
 }

@@ -77,10 +77,11 @@ func (m Model) queryView() string {
 		m.theme.Title.Render("Query Flow"),
 		"",
 		m.theme.Body.Render("Table: "+tableName),
+		m.theme.Body.Render("Source: "+m.currentQueryTargetLabel()+" (Ctrl+G to cycle)"),
 		"",
 		formContent,
 		"",
-		m.theme.Hint.Render("Tab/Shift+Tab to move focus, Enter to activate Run Query, Ctrl+S to switch to scan."),
+		m.theme.Hint.Render("Tab/Shift+Tab focus, [/] sort condition, Enter run, Ctrl+S scan."),
 	)
 	return m.theme.Panel.Render(body)
 }
@@ -143,7 +144,9 @@ func (m Model) resultsView() string {
 	bodyParts = append(bodyParts, "", m.theme.Hint.Render("Use ↑/↓ (or j/k) for rows, n/p for pages, Enter for detail view."))
 
 	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
-	return m.theme.Panel.Render(body)
+	panelWidth, panelHeight := m.stretchedPanelSize()
+
+	return m.theme.Panel.Width(panelWidth).Height(panelHeight).Render(body)
 }
 
 func (m Model) detailView() string {
@@ -174,10 +177,11 @@ func (m Model) detailView() string {
 		"",
 		detailContent,
 		"",
-		m.theme.Hint.Render("Use ↑/↓ (or j/k) to inspect fields. Press Enter to open raw JSON modal."),
+		m.theme.Hint.Render("Use ↑/↓ (or j/k) to inspect fields. Press Enter for raw JSON, S to save item."),
 	)
 
-	return m.theme.Panel.Render(body)
+	panelWidth, panelHeight := m.stretchedPanelSize()
+	return m.theme.Panel.Width(panelWidth).Height(panelHeight).Render(body)
 }
 
 func (m Model) jsonModalView() string {
@@ -216,14 +220,30 @@ func (m Model) jsonModalView() string {
 	}
 
 	header := fmt.Sprintf("Lines %d-%d of %d", start+1, end, len(m.jsonModalLines))
-	body := lipgloss.JoinVertical(
-		lipgloss.Left,
+	searchLine := ""
+	if m.jsonSearchMode {
+		searchLine = m.theme.Highlight.Render("Search: " + m.jsonSearchInput + "▌")
+	} else if m.jsonSearchQuery != "" {
+		searchLine = m.theme.Hint.Render(fmt.Sprintf("Search: %s (%d matches)", m.jsonSearchQuery, len(m.jsonSearchMatches)))
+	}
+
+	bodyParts := []string{
 		m.theme.Title.Render("Raw JSON Modal"),
 		m.theme.Success.Render(header),
+	}
+	if searchLine != "" {
+		bodyParts = append(bodyParts, searchLine)
+	}
+	bodyParts = append(bodyParts,
 		"",
 		strings.Join(rendered, "\n"),
 		"",
-		m.theme.Hint.Render("Use ↑/↓ (or j/k) to scroll lines, n/p for pages, Enter or Esc to close."),
+		m.theme.Hint.Render("Use ↑/↓ (or j/k) scroll, n/p pages, / search, S save, Enter/Esc close."),
+	)
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		bodyParts...,
 	)
 
 	modalPanel := m.theme.Panel
@@ -235,12 +255,18 @@ func (m Model) resultsVisibleColumns() ([]string, int) {
 		return nil, 0
 	}
 
-	availableWidth := m.width - 20
-	if availableWidth < 16 {
-		availableWidth = 16
+	availableWidth, _ := m.stretchedPanelContentSize()
+	if availableWidth < 20 {
+		availableWidth = 20
 	}
 
-	maxColumns := availableWidth / 14
+	// Reserve space for row prefix and separators so columns can consume the rest.
+	usableWidth := availableWidth - 2
+	if usableWidth < 12 {
+		usableWidth = 12
+	}
+
+	maxColumns := usableWidth / 12
 	if maxColumns < 1 {
 		maxColumns = 1
 	}
@@ -254,26 +280,39 @@ func (m Model) resultsVisibleColumns() ([]string, int) {
 	return visible, len(m.resultColumns) - len(visible)
 }
 
-func (m Model) resultColumnWidth(columnCount int) int {
+func (m Model) resultColumnWidths(columnCount int) []int {
 	if columnCount <= 0 {
-		return 12
+		return nil
 	}
 
-	availableWidth := m.width - 20
-	if availableWidth < 16 {
-		availableWidth = 16
+	availableWidth, _ := m.stretchedPanelContentSize()
+	if availableWidth < 20 {
+		availableWidth = 20
+	}
+
+	usableWidth := availableWidth - 2
+	if usableWidth < 12 {
+		usableWidth = 12
 	}
 
 	separatorWidth := (columnCount - 1) * 3
-	columnWidth := (availableWidth - separatorWidth) / columnCount
-	if columnWidth < 8 {
-		return 8
-	}
-	if columnWidth > 28 {
-		return 28
+	contentWidth := usableWidth - separatorWidth
+	if contentWidth < columnCount*8 {
+		contentWidth = columnCount * 8
 	}
 
-	return columnWidth
+	baseWidth := contentWidth / columnCount
+	remainder := contentWidth % columnCount
+	widths := make([]int, columnCount)
+	for idx := 0; idx < columnCount; idx++ {
+		width := baseWidth
+		if idx < remainder {
+			width++
+		}
+		widths[idx] = width
+	}
+
+	return widths
 }
 
 func (m Model) renderResultRows(columns []string) []string {
@@ -284,11 +323,12 @@ func (m Model) renderResultRows(columns []string) []string {
 		return []string{m.theme.Hint.Render("No columns discovered in result rows.")}
 	}
 
-	columnWidth := m.resultColumnWidth(len(columns))
+	columnWidths := m.resultColumnWidths(len(columns))
 	formatCells := func(values []string) string {
 		cells := make([]string, len(values))
 		for idx, value := range values {
-			cells[idx] = fmt.Sprintf("%-*s", columnWidth, truncateRunes(value, columnWidth))
+			width := columnWidths[idx]
+			cells[idx] = fmt.Sprintf("%-*s", width, truncateRunes(value, width))
 		}
 		return strings.Join(cells, " | ")
 	}
@@ -322,7 +362,7 @@ func (m Model) renderDetailRows(fields []string) []string {
 		return []string{m.theme.Hint.Render("No fields available for this item.")}
 	}
 
-	item, _, ok := m.selectedResultItems()
+	_, item, ok := m.selectedResultItems()
 	if !ok {
 		return []string{m.theme.Hint.Render("No fields available for this item.")}
 	}
@@ -344,13 +384,26 @@ func (m Model) renderDetailRows(fields []string) []string {
 		end = len(fields)
 	}
 
+	contentWidth, _ := m.stretchedPanelContentSize()
+
+	// Keep enough horizontal room for field labels and meaningful value preview.
+	if contentWidth < 24 {
+		contentWidth = 24
+	}
+
 	labelWidth := 24
-	valueWidth := m.width - labelWidth - 30
+	if labelWidth > contentWidth/2 {
+		labelWidth = contentWidth / 2
+	}
+	if labelWidth < 12 {
+		labelWidth = 12
+	}
+	valueWidth := contentWidth - labelWidth - 4
 	if valueWidth < 14 {
 		valueWidth = 14
 	}
 
-	lines := make([]string, 0, (end-start)*3+1)
+	lines := make([]string, 0, pageSize+1)
 	for idx := start; idx < end; idx++ {
 		field := fields[idx]
 		value := fmt.Sprint(item[field])
@@ -363,20 +416,18 @@ func (m Model) renderDetailRows(fields []string) []string {
 		if idx == m.detailSelected {
 			marker = "> "
 		}
+		fieldLabel := truncateRunes(field, labelWidth-1)
+		valueLabel := wrapped[0]
+		if len(wrapped) > 1 {
+			valueLabel = truncateRunes(valueLabel, valueWidth-2) + " …"
+		}
 
-		head := fmt.Sprintf("%s%-*s %s", marker, labelWidth, field+":", wrapped[0])
+		head := fmt.Sprintf("%s%-*s %s", marker, labelWidth, fieldLabel+":", valueLabel)
+		head = truncateRunes(head, contentWidth)
 		if idx == m.detailSelected {
 			head = m.theme.Highlight.Render(head)
 		}
 		lines = append(lines, head)
-
-		maxContinuation := 2
-		for lineIdx := 1; lineIdx < len(wrapped) && lineIdx <= maxContinuation; lineIdx++ {
-			lines = append(lines, fmt.Sprintf("  %-*s %s", labelWidth, "", wrapped[lineIdx]))
-		}
-		if len(wrapped) > maxContinuation+1 {
-			lines = append(lines, m.theme.Hint.Render(fmt.Sprintf("  %-*s %s", labelWidth, "", "…")))
-		}
 	}
 
 	if len(fields) > pageSize {
@@ -387,8 +438,14 @@ func (m Model) renderDetailRows(fields []string) []string {
 }
 
 func (m Model) renderQueryFields() []string {
-	lines := make([]string, 0, len(m.queryFields)+2)
-	for idx, field := range m.queryFields {
+	inputCount := m.queryInputCount()
+	if inputCount < 1 {
+		inputCount = 1
+	}
+
+	lines := make([]string, 0, inputCount+2)
+	for idx := 0; idx < inputCount; idx++ {
+		field := m.queryFields[idx]
 		marker := "  "
 		if idx == m.queryFocus {
 			marker = "> "
@@ -413,7 +470,7 @@ func (m Model) renderQueryFields() []string {
 	}
 
 	action := "  [ Run Query ]"
-	if m.queryFocus == len(m.queryFields) {
+	if m.queryFocus == inputCount {
 		action = m.theme.Highlight.Render("> [ Run Query ]")
 	}
 	lines = append(lines, "")

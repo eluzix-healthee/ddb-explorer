@@ -49,7 +49,14 @@ type TableInfo struct {
 	SizeBytes    int64
 	PartitionKey string
 	SortKey      string
+	GSIKeys      []IndexKeyInfo
 	SchemaFields []string
+}
+
+type IndexKeyInfo struct {
+	Name         string
+	PartitionKey string
+	SortKey      string
 }
 
 // ListTables returns a list of table info
@@ -321,6 +328,7 @@ func (c *Client) getTableInfo(name string) (TableInfo, error) {
 	table := result.Table
 	var partitionKey, sortKey string
 	schemaFields := make(map[string]bool)
+	gsiKeys := make([]IndexKeyInfo, 0, len(table.GlobalSecondaryIndexes))
 
 	// Main table key schema
 	for _, ks := range table.KeySchema {
@@ -337,10 +345,23 @@ func (c *Client) getTableInfo(name string) (TableInfo, error) {
 
 	// GSI key schemas
 	for _, gsi := range table.GlobalSecondaryIndexes {
+		indexInfo := IndexKeyInfo{}
+		if gsi.IndexName != nil {
+			indexInfo.Name = *gsi.IndexName
+		}
 		for _, ks := range gsi.KeySchema {
 			if ks.AttributeName != nil {
 				schemaFields[*ks.AttributeName] = true
+				switch ks.KeyType {
+				case "HASH":
+					indexInfo.PartitionKey = *ks.AttributeName
+				case "RANGE":
+					indexInfo.SortKey = *ks.AttributeName
+				}
 			}
+		}
+		if indexInfo.Name != "" && indexInfo.PartitionKey != "" {
+			gsiKeys = append(gsiKeys, indexInfo)
 		}
 	}
 
@@ -357,6 +378,7 @@ func (c *Client) getTableInfo(name string) (TableInfo, error) {
 		SizeBytes:    *table.TableSizeBytes,
 		PartitionKey: partitionKey,
 		SortKey:      sortKey,
+		GSIKeys:      gsiKeys,
 		SchemaFields: fields,
 	}, nil
 }
