@@ -15,6 +15,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - When supporting optional DynamoDB index queries, only set `QueryInput.IndexName` when the form value is non-empty to preserve base-table query behavior.
 - For paginated Bubble Tea tables, keep selection as an absolute row index and derive the visible page from `selected/pageSize`; this keeps resize and page-jump behavior deterministic.
 - When rendering result detail + JSON modal, keep both display-safe rows (`result.Items`) and typed raw payloads (`result.RawItems`) in model state so table readability and raw inspection can evolve independently.
+- For centered Bubble Tea layout regression tests, compare a marker line index between tall and short `tea.WindowSizeMsg` renders and assert the marker appears lower in the taller viewport.
 
 ---
 
@@ -152,4 +153,16 @@ Thread: https://ampcode.com/threads/T-019cb8a9-c102-7098-b2e7-cffffd8a6725
   - In Bubble Tea async flows, treat command responses as potentially stale and validate both state and request identity before mutating model state.
   - Clear pending request IDs when leaving a flow (`query`/`scan`) so late responses from abandoned commands cannot hijack navigation.
   - Unit-testing command factories directly (calling the returned `tea.Cmd`) is a fast way to validate typed error-message contracts without network dependencies.
+---
+
+## 2026-03-04 13:52:39 IST - US-012
+Thread: https://ampcode.com/threads/T-019cb8af-3fa1-71bd-b880-60723024f57e
+- Added dedicated migration verification coverage in `tui/migration_verification_test.go` for core state transitions across the main Bubble Tea flow and back-navigation paths.
+- Added resize recalculation assertions for results pagination and JSON modal scroll clamping under `tea.WindowSizeMsg` updates.
+- Added centered-layout regression checks for primary views (`tables`, `query`, `scan`, `results`, `detail`) and the JSON modal by comparing content marker positions across viewport sizes.
+- Files changed: `tui/migration_verification_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Use a single flow test to validate multiple state transitions together; this catches contract drift between handlers and transition rules earlier than isolated tests.
+  - Resize-driven tests should assert derived viewport state (`resultPage`, modal scroll bounds) in addition to rendered line counts.
+  - Centering behavior remains stable when tests compare marker position changes between two explicit terminal heights.
 ---
