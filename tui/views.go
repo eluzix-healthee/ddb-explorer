@@ -105,6 +105,134 @@ func (m Model) scanView() string {
 	return m.theme.Panel.Render(body)
 }
 
+func (m Model) resultsView() string {
+	tableName := m.activeTable
+	if tableName == "" {
+		tableName = "(none)"
+	}
+
+	pagination := m.resultsPaginationStatus()
+	columns, hiddenColumns := m.resultsVisibleColumns()
+	tableLines := m.renderResultRows(columns)
+	tableContent := lipgloss.JoinVertical(lipgloss.Left, tableLines...)
+
+	columnHint := ""
+	if hiddenColumns > 0 {
+		columnHint = m.theme.Hint.Render(fmt.Sprintf("Showing %d of %d columns (resize wider to reveal more).", len(columns), len(m.resultColumns)))
+	}
+
+	serverPageHint := ""
+	if m.resultHasMore {
+		serverPageHint = m.theme.Hint.Render("More items are available in DynamoDB beyond this local page batch.")
+	}
+
+	bodyParts := []string{
+		m.theme.Title.Render("Results"),
+		"",
+		m.theme.Body.Render("Table: " + tableName),
+		m.theme.Success.Render(pagination),
+		"",
+		tableContent,
+	}
+	if columnHint != "" {
+		bodyParts = append(bodyParts, "", columnHint)
+	}
+	if serverPageHint != "" {
+		bodyParts = append(bodyParts, serverPageHint)
+	}
+	bodyParts = append(bodyParts, "", m.theme.Hint.Render("Use ↑/↓ (or j/k) for rows, n/p for pages, Enter for detail view."))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, bodyParts...)
+	return m.theme.Panel.Render(body)
+}
+
+func (m Model) resultsVisibleColumns() ([]string, int) {
+	if len(m.resultColumns) == 0 {
+		return nil, 0
+	}
+
+	availableWidth := m.width - 20
+	if availableWidth < 16 {
+		availableWidth = 16
+	}
+
+	maxColumns := availableWidth / 14
+	if maxColumns < 1 {
+		maxColumns = 1
+	}
+	if maxColumns > len(m.resultColumns) {
+		maxColumns = len(m.resultColumns)
+	}
+
+	visible := make([]string, maxColumns)
+	copy(visible, m.resultColumns[:maxColumns])
+
+	return visible, len(m.resultColumns) - len(visible)
+}
+
+func (m Model) resultColumnWidth(columnCount int) int {
+	if columnCount <= 0 {
+		return 12
+	}
+
+	availableWidth := m.width - 20
+	if availableWidth < 16 {
+		availableWidth = 16
+	}
+
+	separatorWidth := (columnCount - 1) * 3
+	columnWidth := (availableWidth - separatorWidth) / columnCount
+	if columnWidth < 8 {
+		return 8
+	}
+	if columnWidth > 28 {
+		return 28
+	}
+
+	return columnWidth
+}
+
+func (m Model) renderResultRows(columns []string) []string {
+	if len(m.resultItems) == 0 {
+		return []string{m.theme.Hint.Render("No items returned.")}
+	}
+	if len(columns) == 0 {
+		return []string{m.theme.Hint.Render("No columns discovered in result rows.")}
+	}
+
+	columnWidth := m.resultColumnWidth(len(columns))
+	formatCells := func(values []string) string {
+		cells := make([]string, len(values))
+		for idx, value := range values {
+			cells[idx] = fmt.Sprintf("%-*s", columnWidth, truncateRunes(value, columnWidth))
+		}
+		return strings.Join(cells, " | ")
+	}
+
+	headerValues := make([]string, len(columns))
+	copy(headerValues, columns)
+	rows := []string{m.theme.Highlight.Render("  " + formatCells(headerValues))}
+
+	start, end := m.currentResultPageRange()
+	for idx := start; idx < end; idx++ {
+		item := m.resultItems[idx]
+		values := make([]string, 0, len(columns))
+		for _, column := range columns {
+			values = append(values, fmt.Sprint(item[column]))
+		}
+
+		row := "  " + formatCells(values)
+		if idx == m.resultSelected {
+			rows = append(rows, m.theme.Highlight.Render("> "+formatCells(values)))
+			continue
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
 func (m Model) renderQueryFields() []string {
 	lines := make([]string, 0, len(m.queryFields)+2)
 	for idx, field := range m.queryFields {

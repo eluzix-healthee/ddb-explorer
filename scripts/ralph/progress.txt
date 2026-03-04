@@ -11,6 +11,7 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - For keyboard-heavy Bubble Tea views, route global keys first and then dispatch to per-state key handlers; this keeps transitions explicit and prevents conflicting key behavior across screens.
 - For Bubble Tea forms, treat the submit action as a virtual focus target at index `len(fields)` so `tab`/`shift+tab` navigation and explicit `enter` submission stay predictable.
 - When supporting optional DynamoDB index queries, only set `QueryInput.IndexName` when the form value is non-empty to preserve base-table query behavior.
+- For paginated Bubble Tea tables, keep selection as an absolute row index and derive the visible page from `selected/pageSize`; this keeps resize and page-jump behavior deterministic.
 
 ---
 
@@ -98,4 +99,16 @@ Thread: https://ampcode.com/threads/T-019cb894-fd97-726a-a230-32c58e4922e2
   - Keep form field metadata (`label`, `required`, `placeholder`) in model state so rendering and validation share one source of truth.
   - For explicit trigger UX in Bubble Tea forms, make Enter advance focus on input rows and submit only when the action row is focused.
   - Coverage for centered layouts is stable when tests assert terminal line count and relative line positions before/after `tea.WindowSizeMsg`.
+---
+
+## 2026-03-04 13:30:54 IST - US-008
+Thread: https://ampcode.com/threads/T-019cb899-a268-743d-b608-d8559f7185d6
+- Added a dedicated `results` view state that activates after query/scan success, tracks result rows/columns, and routes back to the originating form (`query` or `scan`).
+- Implemented adaptive results-table rendering from discovered item fields, visible pagination status, and results-specific keyboard navigation for row movement (`↑/↓`, `j/k`) and page movement (`n/p`).
+- Added support-state for server-side continuation visibility (`LastEvaluatedKey`) and regression tests for results transitions, navigation, and centered resize behavior.
+- Files changed: `tui/app.go`, `tui/keys.go`, `tui/views.go`, `tui/results_test.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep result table rendering tolerant of sparse fields by discovering columns from the union of item keys.
+  - Compute visible columns from terminal width so narrow terminals gracefully degrade without wrapping into chrome.
+  - Regression-test page movement with deterministic `height`-based page sizes to avoid flaky navigation assertions.
 ---

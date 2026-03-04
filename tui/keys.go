@@ -11,6 +11,7 @@ type KeyMap struct {
 	TableList TableListKeyMap
 	Query     QueryKeyMap
 	Scan      ScanKeyMap
+	Results   ResultsKeyMap
 }
 
 type GlobalKeyMap struct {
@@ -35,9 +36,15 @@ type QueryKeyMap struct {
 }
 
 type ScanKeyMap struct {
-	Run      key.Binding
+	Run key.Binding
+}
+
+type ResultsKeyMap struct {
+	MoveUp   key.Binding
+	MoveDown key.Binding
 	NextPage key.Binding
 	PrevPage key.Binding
+	Open     key.Binding
 }
 
 func defaultKeyMap() KeyMap {
@@ -101,13 +108,27 @@ func defaultKeyMap() KeyMap {
 				key.WithKeys("enter"),
 				key.WithHelp("enter", "run scan"),
 			),
+		},
+		Results: ResultsKeyMap{
+			MoveUp: key.NewBinding(
+				key.WithKeys("up", "k"),
+				key.WithHelp("up/k", "move row up"),
+			),
+			MoveDown: key.NewBinding(
+				key.WithKeys("down", "j"),
+				key.WithHelp("down/j", "move row down"),
+			),
 			NextPage: key.NewBinding(
-				key.WithKeys("n"),
+				key.WithKeys("n", "right", "pgdown"),
 				key.WithHelp("n", "next page"),
 			),
 			PrevPage: key.NewBinding(
-				key.WithKeys("p"),
+				key.WithKeys("p", "left", "pgup"),
 				key.WithHelp("p", "previous page"),
+			),
+			Open: key.NewBinding(
+				key.WithKeys("enter"),
+				key.WithHelp("enter", "open row detail"),
 			),
 		},
 	}
@@ -154,8 +175,14 @@ func (k KeyMap) stateBindings(state viewState) []key.Binding {
 	case viewStateScan:
 		return []key.Binding{
 			k.Scan.Run,
-			k.Scan.NextPage,
-			k.Scan.PrevPage,
+		}
+	case viewStateResults:
+		return []key.Binding{
+			k.Results.MoveUp,
+			k.Results.MoveDown,
+			k.Results.NextPage,
+			k.Results.PrevPage,
+			k.Results.Open,
 		}
 	default:
 		return nil

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"ddb-explorer/aws"
@@ -20,6 +21,7 @@ const (
 	viewStateTables  viewState = "tables"
 	viewStateQuery   viewState = "query"
 	viewStateScan    viewState = "scan"
+	viewStateResults viewState = "results"
 	viewStateError   viewState = "error"
 )
 
@@ -63,6 +65,12 @@ type Model struct {
 	activeTable       string
 	queryFields       []queryField
 	queryFocus        int
+	resultItems       []map[string]interface{}
+	resultColumns     []string
+	resultSelected    int
+	resultPage        int
+	resultOrigin      viewState
+	resultHasMore     bool
 
 	showHelp bool
 	spinner  spinner.Model
@@ -109,6 +117,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampResultsViewport()
 		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Global.Quit) {
@@ -129,6 +138,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateQueryKey(msg)
 		case viewStateScan:
 			return m.updateScanKey(msg)
+		case viewStateResults:
+			return m.updateResultsKey(msg)
 		}
 	case tableLoadSuccessMsg:
 		m.tables = msg.tables
@@ -146,6 +157,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = normalizeError(msg.err, "table load failed")
 		return m, nil
 	case querySuccessMsg:
+		m.enterResultsView(msg.tableName, msg.result, viewStateQuery)
 		m.status = fmt.Sprintf("query returned %d items from %s", len(msg.result.Items), msg.tableName)
 		m.err = nil
 		return m, nil
@@ -154,6 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = normalizeError(msg.err, "query failed")
 		return m, nil
 	case scanSuccessMsg:
+		m.enterResultsView(msg.tableName, msg.result, viewStateScan)
 		m.status = fmt.Sprintf("scan returned %d items from %s", len(msg.result.Items), msg.tableName)
 		m.err = nil
 		return m, nil
@@ -185,6 +198,8 @@ func (m Model) View() string {
 		content = m.queryView()
 	case viewStateScan:
 		content = m.scanView()
+	case viewStateResults:
+		content = m.resultsView()
 	case viewStateError:
 		content = m.errorView()
 	default:
@@ -238,6 +253,16 @@ func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
 	case viewStateQuery, viewStateScan:
 		m.state = viewStateTables
 		m.status = "returned to table list"
+		return m, nil
+	case viewStateResults:
+		if m.resultOrigin == viewStateScan {
+			m.state = viewStateScan
+			m.status = "returned to scan form"
+			return m, nil
+		}
+
+		m.state = viewStateQuery
+		m.status = "returned to query form"
 		return m, nil
 	case viewStateError:
 		if len(m.tables) > 0 {
@@ -356,8 +381,28 @@ func (m Model) updateScanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		return m, runScanCmd(m.client, m.activeTable)
 	}
-	if key.Matches(msg, m.keys.Scan.NextPage) || key.Matches(msg, m.keys.Scan.PrevPage) {
-		m.status = "scan pagination arrives in US-008"
+	return m, nil
+}
+
+func (m Model) updateResultsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Results.MoveUp) {
+		m.moveResultSelection(-1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Results.MoveDown) {
+		m.moveResultSelection(1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Results.NextPage) {
+		m.moveResultPage(1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Results.PrevPage) {
+		m.moveResultPage(-1)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Results.Open) {
+		m.status = "item detail view arrives in US-009"
 		return m, nil
 	}
 
@@ -444,6 +489,12 @@ func (m Model) filteredTables() []aws.TableInfo {
 func (m *Model) enterQueryFlow(table aws.TableInfo) {
 	m.state = viewStateQuery
 	m.activeTable = table.Name
+	m.resultItems = nil
+	m.resultColumns = nil
+	m.resultSelected = 0
+	m.resultPage = 0
+	m.resultOrigin = ""
+	m.resultHasMore = false
 	m.queryFields = []queryField{
 		{
 			label:       "Partition Key Name",
@@ -471,6 +522,180 @@ func (m *Model) enterQueryFlow(table aws.TableInfo) {
 		},
 	}
 	m.queryFocus = 0
+}
+
+func (m *Model) enterResultsView(tableName string, result aws.QueryResult, origin viewState) {
+	m.state = viewStateResults
+	m.activeTable = tableName
+	m.resultItems = result.Items
+	m.resultColumns = discoverResultColumns(result.Items)
+	m.resultSelected = 0
+	m.resultPage = 0
+	m.resultOrigin = origin
+	m.resultHasMore = len(result.LastEvaluatedKey) > 0
+	m.clampResultsViewport()
+}
+
+func discoverResultColumns(items []map[string]interface{}) []string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	unique := make(map[string]struct{})
+	for _, item := range items {
+		for key := range item {
+			unique[key] = struct{}{}
+		}
+	}
+
+	columns := make([]string, 0, len(unique))
+	for key := range unique {
+		columns = append(columns, key)
+	}
+	sort.Strings(columns)
+
+	return columns
+}
+
+func (m Model) resultPageSize() int {
+	pageSize := m.height - 18
+	if pageSize < 1 {
+		return 1
+	}
+
+	return pageSize
+}
+
+func (m Model) resultPageCount() int {
+	if len(m.resultItems) == 0 {
+		return 1
+	}
+
+	pageSize := m.resultPageSize()
+	return (len(m.resultItems)-1)/pageSize + 1
+}
+
+func (m Model) currentResultPageRange() (int, int) {
+	if len(m.resultItems) == 0 {
+		return 0, 0
+	}
+
+	pageSize := m.resultPageSize()
+	start := m.resultPage * pageSize
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(m.resultItems) {
+		start = (len(m.resultItems) - 1) / pageSize * pageSize
+	}
+
+	end := start + pageSize
+	if end > len(m.resultItems) {
+		end = len(m.resultItems)
+	}
+
+	return start, end
+}
+
+func (m *Model) clampResultsViewport() {
+	if len(m.resultItems) == 0 {
+		m.resultSelected = 0
+		m.resultPage = 0
+		return
+	}
+
+	if m.resultSelected < 0 {
+		m.resultSelected = 0
+	}
+	if m.resultSelected >= len(m.resultItems) {
+		m.resultSelected = len(m.resultItems) - 1
+	}
+
+	pageSize := m.resultPageSize()
+	if pageSize <= 0 {
+		m.resultPage = 0
+		return
+	}
+
+	m.resultPage = m.resultSelected / pageSize
+}
+
+func (m *Model) moveResultSelection(delta int) {
+	if len(m.resultItems) == 0 {
+		m.resultSelected = 0
+		m.resultPage = 0
+		m.status = "no rows available"
+		return
+	}
+
+	m.resultSelected += delta
+	if m.resultSelected < 0 {
+		m.resultSelected = 0
+	}
+	if m.resultSelected >= len(m.resultItems) {
+		m.resultSelected = len(m.resultItems) - 1
+	}
+
+	m.clampResultsViewport()
+	m.status = fmt.Sprintf("row %d of %d", m.resultSelected+1, len(m.resultItems))
+}
+
+func (m *Model) moveResultPage(delta int) {
+	if len(m.resultItems) == 0 {
+		m.status = "no rows available"
+		m.resultPage = 0
+		m.resultSelected = 0
+		return
+	}
+
+	pageCount := m.resultPageCount()
+	if pageCount <= 1 {
+		m.status = "already on the only page"
+		return
+	}
+
+	currentStart, _ := m.currentResultPageRange()
+	offset := m.resultSelected - currentStart
+	if offset < 0 {
+		offset = 0
+	}
+
+	nextPage := m.resultPage + delta
+	if nextPage < 0 {
+		nextPage = 0
+	}
+	if nextPage >= pageCount {
+		nextPage = pageCount - 1
+	}
+	m.resultPage = nextPage
+
+	start, end := m.currentResultPageRange()
+	target := start + offset
+	if target >= end {
+		target = end - 1
+	}
+	if target < start {
+		target = start
+	}
+	m.resultSelected = target
+
+	m.status = m.resultsPaginationStatus()
+}
+
+func (m Model) resultsPaginationStatus() string {
+	if len(m.resultItems) == 0 {
+		return "Page 1/1 | rows 0-0 of 0"
+	}
+
+	start, end := m.currentResultPageRange()
+	return fmt.Sprintf(
+		"Page %d/%d | rows %d-%d of %d",
+		m.resultPage+1,
+		m.resultPageCount(),
+		start+1,
+		end,
+		len(m.resultItems),
+	)
 }
 
 func (m *Model) shiftQueryFocus(delta int) {
