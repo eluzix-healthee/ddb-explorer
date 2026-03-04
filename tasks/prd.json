@@ -1,0 +1,211 @@
+{
+  "branchName": "ralph/bubbletea-migration",
+  "description": "Migrate DDB Explorer TUI from tview/tcell to Bubble Tea with full feature parity, centered screen layouts, and keyboard-first workflows.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add Bubble Tea dependencies",
+      "description": "As a developer, I need bubbletea, bubbles, and lipgloss configured so the new TUI can compile and run.",
+      "acceptanceCriteria": [
+        "go.mod includes github.com/charmbracelet/bubbletea, github.com/charmbracelet/bubbles, and github.com/charmbracelet/lipgloss",
+        "go mod tidy completes successfully",
+        "Existing non-TUI packages continue compiling"
+      ],
+      "dependencies": [],
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "Create modular tui package structure",
+      "description": "As a developer, I need app, views, components, styles, keys, and messages split into dedicated files under tui/.",
+      "acceptanceCriteria": [
+        "tui/ package structure is created and builds",
+        "main.go only performs startup wiring and launches tea program",
+        "No circular imports are introduced"
+      ],
+      "dependencies": [
+        "US-001"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Define shared styles and palette",
+      "description": "As a developer, I need centralized lipgloss styles for consistent visual language across screens.",
+      "acceptanceCriteria": [
+        "Shared colors and style primitives are defined in tui/styles",
+        "Title, hint, error, success, and highlight styles are exported",
+        "Styles are reused by multiple views"
+      ],
+      "dependencies": [
+        "US-002"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Centralize key bindings and message types",
+      "description": "As a developer, I need global and view-scoped key maps plus typed tea messages to keep updates predictable.",
+      "acceptanceCriteria": [
+        "Global keys (quit, back, help) are defined once",
+        "View-specific keys are grouped by feature",
+        "Load/query/scan success and error messages are modeled as typed messages"
+      ],
+      "dependencies": [
+        "US-002"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Implement loading view",
+      "description": "As a user, I need a centered loading view with spinner so app startup feels responsive and clear.",
+      "acceptanceCriteria": [
+        "Loading view renders spinner and context text",
+        "Loading content is horizontally and vertically centered",
+        "Resize updates keep the loading screen centered"
+      ],
+      "dependencies": [
+        "US-003",
+        "US-004"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Implement table list view",
+      "description": "As a user, I need to browse and filter DynamoDB tables with keyboard navigation.",
+      "acceptanceCriteria": [
+        "Table list shows name, items, size, and status",
+        "Filter input updates visible rows live",
+        "Selection opens query/scan flow",
+        "Primary table list screen is centered within available content area"
+      ],
+      "dependencies": [
+        "US-003",
+        "US-004"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-007",
+      "title": "Implement query and scan forms",
+      "description": "As a user, I need centered forms for query and scan operations with predictable focus handling.",
+      "acceptanceCriteria": [
+        "Query form supports partition key, optional sort key, and optional index",
+        "Scan mode provides explicit trigger action",
+        "Form focus order is keyboard-friendly",
+        "Form layouts stay centered during resize"
+      ],
+      "dependencies": [
+        "US-003",
+        "US-004",
+        "US-006"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-008",
+      "title": "Implement results table and pagination",
+      "description": "As a user, I need paginated query/scan results with adaptive columns and keyboard navigation.",
+      "acceptanceCriteria": [
+        "Results table columns adapt to discovered item fields",
+        "Pagination status is visible and updates correctly",
+        "Keyboard navigation supports row and page movement",
+        "Results layout remains centered and does not overlap chrome"
+      ],
+      "dependencies": [
+        "US-007"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-009",
+      "title": "Implement item detail and centered JSON modal",
+      "description": "As a user, I need detailed item inspection and raw JSON modal display for deeper analysis.",
+      "acceptanceCriteria": [
+        "Item detail view renders key-value rows clearly",
+        "JSON modal opens from detail context and supports scrolling",
+        "JSON modal is centered in terminal viewport",
+        "Large values remain readable without breaking layout"
+      ],
+      "dependencies": [
+        "US-008"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-010",
+      "title": "Integrate app state machine and shared chrome",
+      "description": "As a developer, I need one app model that owns view transitions, layout calculations, and global chrome.",
+      "acceptanceCriteria": [
+        "All transitions are represented by explicit view-state values",
+        "Window resize updates dimensions for current view and components",
+        "Help bar and status bar render consistently across views",
+        "All primary screens are centered using a shared layout strategy"
+      ],
+      "dependencies": [
+        "US-005",
+        "US-006",
+        "US-007",
+        "US-008",
+        "US-009"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-011",
+      "title": "Wire async commands and failure handling",
+      "description": "As a user, I need safe async load/query/scan operations with clear error visibility and recovery.",
+      "acceptanceCriteria": [
+        "Table load, query, and scan run through tea.Cmd patterns",
+        "Recoverable errors are surfaced in UI without app crash",
+        "Update paths avoid invalid intermediate state transitions",
+        "No error is silently ignored"
+      ],
+      "dependencies": [
+        "US-010"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-012",
+      "title": "Add migration verification tests",
+      "description": "As a developer, I need tests for state transitions, resize behavior, and centered layout helpers.",
+      "acceptanceCriteria": [
+        "Tests cover core view-state transition paths",
+        "Tests validate resize-driven layout recalculation",
+        "Tests cover centering behavior for main views and modal",
+        "go test ./... passes"
+      ],
+      "dependencies": [
+        "US-011"
+      ],
+      "passes": false
+    }
+  ],
+  "functionalRequirements": [
+    "FR-1: Replace tview/tcell rendering and input handling with Bubble Tea architecture.",
+    "FR-2: Keep existing aws package behavior unchanged.",
+    "FR-3: Use an explicit view-state machine for all navigation.",
+    "FR-4: Render help and status chrome consistently for every primary view.",
+    "FR-5: Center all primary screens in the available content region.",
+    "FR-6: Center modal overlays relative to terminal dimensions.",
+    "FR-7: Recompute layout deterministically on tea.WindowSizeMsg.",
+    "FR-8: Preserve keyboard-only completion of core workflows.",
+    "FR-9: Surface recoverable command errors to users clearly.",
+    "FR-10: Provide loading states for table listing and data retrieval operations."
+  ],
+  "nonGoals": [
+    "Rewriting AWS data access logic",
+    "Adding new product capabilities beyond current app scope",
+    "Mouse-first interactions",
+    "Theming/plugin frameworks"
+  ],
+  "successMetrics": [
+    "All baseline flows are available in Bubble Tea implementation",
+    "All primary views remain centered during terminal resize",
+    "Keyboard-only user can complete end-to-end query workflow",
+    "Regression tests pass in CI and locally"
+  ]
+}

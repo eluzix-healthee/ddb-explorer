@@ -1,0 +1,18 @@
+# Ralph Progress Log
+Started: Wed Mar  4 12:56:01 IST 2026
+
+## Codebase Patterns
+- Add a tiny compile-time anchor file (for example, `tui/deps.go`) when introducing migration dependencies before feature code exists; this keeps modules in `go.mod` after `go mod tidy`.
+
+---
+
+## 2026-03-04 12:57:50 IST - US-001
+Thread: https://ampcode.com/threads/T-019cb87d-a157-7778-89d7-8351b2fb8b22
+- Added Bubble Tea stack dependencies (`bubbletea`, `bubbles`, `lipgloss`) and tidied module metadata.
+- Added a minimal `tui/deps.go` anchor so the new dependencies remain explicit and compiled as part of the module.
+- Files changed: `go.mod`, `go.sum`, `tui/deps.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`, plus existing Ralph scaffolding files in this working copy.
+- **Learnings for future iterations:**
+  - `go mod tidy` removes unused migration dependencies unless they are imported by module code.
+  - `go test ./...` and `go build ./...` are fast safety checks for compile health in this repo.
+  - Keeping migration dependencies isolated in `tui/deps.go` avoids touching legacy `main.go` before the full Bubble Tea transition.
+---
