@@ -173,7 +173,7 @@ func formatAttributeValue(v types.AttributeValue) string {
 	}
 }
 
-func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortValue, condition string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
+func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortValue, condition, indexName string, exclusiveStartKey map[string]interface{}) (QueryResult, error) {
 	limit := int32(15) // Load batch of 15 items
 	input := &dynamodb.QueryInput{
 		TableName:              &tableName,
@@ -185,6 +185,9 @@ func (c *Client) Query(tableName, partitionKey, partitionValue, sortKey, sortVal
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":pk": &types.AttributeValueMemberS{Value: partitionValue},
 		},
+	}
+	if strings.TrimSpace(indexName) != "" {
+		input.IndexName = aws.String(indexName)
 	}
 
 	if exclusiveStartKey != nil {

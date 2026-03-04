@@ -9,6 +9,8 @@ Started: Wed Mar  4 12:56:01 IST 2026
 - For async loading screens, gate `spinner.TickMsg` handling by current view-state and re-enter loading with `tea.Batch(spinner.Tick, loadCmd)` so the spinner runs only while that screen is active.
 - Use `Program.Run()` (not deprecated `Program.Start()`) when launching Bubble Tea programs from `main.go`.
 - For keyboard-heavy Bubble Tea views, route global keys first and then dispatch to per-state key handlers; this keeps transitions explicit and prevents conflicting key behavior across screens.
+- For Bubble Tea forms, treat the submit action as a virtual focus target at index `len(fields)` so `tab`/`shift+tab` navigation and explicit `enter` submission stay predictable.
+- When supporting optional DynamoDB index queries, only set `QueryInput.IndexName` when the form value is non-empty to preserve base-table query behavior.
 
 ---
 
@@ -83,4 +85,17 @@ Thread: https://ampcode.com/threads/T-019cb88f-737f-752d-a6a5-bc98e9153585
   - Keep table filtering as model-owned state and derive visible rows via a helper (`filteredTables`) so rendering and key handlers stay consistent.
   - Reset or clamp selection whenever filter criteria changes to avoid invalid row indices after the visible set shrinks.
   - Placeholder query/scan view states can be introduced early to lock in navigation contracts before full form implementation.
+---
+
+## 2026-03-04 13:25:47 IST - US-007
+Thread: https://ampcode.com/threads/T-019cb894-fd97-726a-a230-32c58e4922e2
+- Implemented centered query and scan forms with keyboard-friendly focus order (`tab` / `shift+tab`), inline field editing, and explicit action rows for running query/scan.
+- Added query form support for required partition key/value plus optional sort key/value and optional index name; table schema keys now prefill form defaults when available.
+- Wired command execution hooks for query/scan submit actions, including nil-client safety checks and DynamoDB query index passthrough support.
+- Added regression tests for form rendering, focus/edit flow, explicit trigger behavior, and resize-centered layout behavior.
+- Files changed: `tui/app.go`, `tui/views.go`, `tui/query_scan_test.go`, `aws/dynamodb.go`, `tasks/prd.json`, `scripts/ralph/progress.txt`.
+- **Learnings for future iterations:**
+  - Keep form field metadata (`label`, `required`, `placeholder`) in model state so rendering and validation share one source of truth.
+  - For explicit trigger UX in Bubble Tea forms, make Enter advance focus on input rows and submit only when the action row is focused.
+  - Coverage for centered layouts is stable when tests assert terminal line count and relative line positions before/after `tea.WindowSizeMsg`.
 ---

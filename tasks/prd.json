@@ -102,7 +102,7 @@
         "US-004",
         "US-006"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-008",

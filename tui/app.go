@@ -23,6 +23,30 @@ const (
 	viewStateError   viewState = "error"
 )
 
+const (
+	queryFieldPartitionKey = iota
+	queryFieldPartitionValue
+	queryFieldSortKey
+	queryFieldSortValue
+	queryFieldIndexName
+)
+
+type queryField struct {
+	label       string
+	value       string
+	placeholder string
+	required    bool
+}
+
+type queryRequest struct {
+	tableName      string
+	partitionKey   string
+	partitionValue string
+	sortKey        string
+	sortValue      string
+	indexName      string
+}
+
 type Model struct {
 	profile string
 	client  *aws.Client
@@ -37,6 +61,8 @@ type Model struct {
 	filterInputActive bool
 	selectedTable     int
 	activeTable       string
+	queryFields       []queryField
+	queryFocus        int
 
 	showHelp bool
 	spinner  spinner.Model
@@ -57,6 +83,13 @@ func NewModel(profile string, client *aws.Client) Model {
 		height:  24,
 		state:   viewStateLoading,
 		status:  "loading DynamoDB tables",
+		queryFields: []queryField{
+			{label: "Partition Key Name", placeholder: "e.g. account_id", required: true},
+			{label: "Partition Key Value", placeholder: "required value", required: true},
+			{label: "Sort Key Name", placeholder: "optional"},
+			{label: "Sort Key Value", placeholder: "optional"},
+			{label: "Index Name", placeholder: "optional GSI/LSI"},
+		},
 		spinner: spin,
 		keys:    defaultKeyMap(),
 		theme:   theme,
@@ -256,8 +289,7 @@ func (m Model) updateTablesKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		m.state = viewStateQuery
-		m.activeTable = table.Name
+		m.enterQueryFlow(table)
 		m.filterInputActive = false
 		m.status = fmt.Sprintf("opened query flow for %s", table.Name)
 		return m, nil
@@ -272,12 +304,41 @@ func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("switched to scan flow for %s", m.activeTable)
 		return m, nil
 	}
-	if key.Matches(msg, m.keys.Query.Submit) {
-		m.status = fmt.Sprintf("query form for %s arrives in US-007", m.activeTable)
+	if key.Matches(msg, m.keys.Query.NextField) {
+		m.shiftQueryFocus(1)
+		m.status = fmt.Sprintf("focused %s", m.queryFocusLabel())
 		return m, nil
 	}
-	if key.Matches(msg, m.keys.Query.NextField) || key.Matches(msg, m.keys.Query.PrevField) {
-		m.status = "field navigation will be wired in US-007"
+	if key.Matches(msg, m.keys.Query.PrevField) {
+		m.shiftQueryFocus(-1)
+		m.status = fmt.Sprintf("focused %s", m.queryFocusLabel())
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Query.Submit) {
+		if m.queryFocus < len(m.queryFields) {
+			m.shiftQueryFocus(1)
+			m.status = fmt.Sprintf("focused %s", m.queryFocusLabel())
+			return m, nil
+		}
+
+		request, err := m.buildQueryRequest()
+		if err != nil {
+			m.status = err.Error()
+			m.err = err
+			return m, nil
+		}
+
+		m.status = fmt.Sprintf("running query for %s", request.tableName)
+		m.err = nil
+		return m, runQueryCmd(m.client, request)
+	}
+
+	if m.queryFocus >= len(m.queryFields) {
+		return m, nil
+	}
+
+	if m.updateQueryInput(msg) {
+		m.status = fmt.Sprintf("editing %s", m.queryFields[m.queryFocus].label)
 		return m, nil
 	}
 
@@ -286,8 +347,14 @@ func (m Model) updateQueryKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateScanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Scan.Run) {
-		m.status = fmt.Sprintf("scan form for %s arrives in US-007", m.activeTable)
-		return m, nil
+		if m.activeTable == "" {
+			m.status = "cannot run scan without selected table"
+			return m, nil
+		}
+
+		m.status = fmt.Sprintf("running scan for %s", m.activeTable)
+		m.err = nil
+		return m, runScanCmd(m.client, m.activeTable)
 	}
 	if key.Matches(msg, m.keys.Scan.NextPage) || key.Matches(msg, m.keys.Scan.PrevPage) {
 		m.status = "scan pagination arrives in US-008"
@@ -372,4 +439,156 @@ func (m Model) filteredTables() []aws.TableInfo {
 	}
 
 	return filtered
+}
+
+func (m *Model) enterQueryFlow(table aws.TableInfo) {
+	m.state = viewStateQuery
+	m.activeTable = table.Name
+	m.queryFields = []queryField{
+		{
+			label:       "Partition Key Name",
+			value:       table.PartitionKey,
+			placeholder: "e.g. account_id",
+			required:    true,
+		},
+		{
+			label:       "Partition Key Value",
+			placeholder: "required value",
+			required:    true,
+		},
+		{
+			label:       "Sort Key Name",
+			value:       table.SortKey,
+			placeholder: "optional",
+		},
+		{
+			label:       "Sort Key Value",
+			placeholder: "optional",
+		},
+		{
+			label:       "Index Name",
+			placeholder: "optional GSI/LSI",
+		},
+	}
+	m.queryFocus = 0
+}
+
+func (m *Model) shiftQueryFocus(delta int) {
+	max := len(m.queryFields)
+	if max < 0 {
+		max = 0
+	}
+
+	next := m.queryFocus + delta
+	if next < 0 {
+		next = max
+	}
+	if next > max {
+		next = 0
+	}
+
+	m.queryFocus = next
+}
+
+func (m Model) queryFocusLabel() string {
+	if m.queryFocus >= len(m.queryFields) {
+		return "Run Query"
+	}
+
+	return m.queryFields[m.queryFocus].label
+}
+
+func (m *Model) updateQueryInput(msg tea.KeyMsg) bool {
+	if m.queryFocus < 0 || m.queryFocus >= len(m.queryFields) {
+		return false
+	}
+
+	field := &m.queryFields[m.queryFocus]
+	switch msg.Type {
+	case tea.KeyRunes:
+		field.value += string(msg.Runes)
+		return true
+	case tea.KeyBackspace, tea.KeyDelete:
+		if field.value == "" {
+			return true
+		}
+		runes := []rune(field.value)
+		field.value = string(runes[:len(runes)-1])
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) buildQueryRequest() (queryRequest, error) {
+	if m.activeTable == "" {
+		return queryRequest{}, errors.New("no table selected")
+	}
+
+	if len(m.queryFields) <= queryFieldIndexName {
+		return queryRequest{}, errors.New("query form is not initialized")
+	}
+
+	request := queryRequest{
+		tableName:      m.activeTable,
+		partitionKey:   strings.TrimSpace(m.queryFields[queryFieldPartitionKey].value),
+		partitionValue: strings.TrimSpace(m.queryFields[queryFieldPartitionValue].value),
+		sortKey:        strings.TrimSpace(m.queryFields[queryFieldSortKey].value),
+		sortValue:      strings.TrimSpace(m.queryFields[queryFieldSortValue].value),
+		indexName:      strings.TrimSpace(m.queryFields[queryFieldIndexName].value),
+	}
+
+	if request.partitionKey == "" {
+		return queryRequest{}, errors.New("partition key name is required")
+	}
+	if request.partitionValue == "" {
+		return queryRequest{}, errors.New("partition key value is required")
+	}
+
+	hasSortKey := request.sortKey != ""
+	hasSortValue := request.sortValue != ""
+	if hasSortKey != hasSortValue {
+		return queryRequest{}, errors.New("sort key name and value must both be set or both be empty")
+	}
+
+	return request, nil
+}
+
+func runQueryCmd(client *aws.Client, request queryRequest) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return queryErrorMsg{tableName: request.tableName, err: errors.New("aws client is nil")}
+		}
+
+		result, err := client.Query(
+			request.tableName,
+			request.partitionKey,
+			request.partitionValue,
+			request.sortKey,
+			request.sortValue,
+			"=",
+			request.indexName,
+			nil,
+		)
+		if err != nil {
+			return queryErrorMsg{tableName: request.tableName, err: err}
+		}
+
+		return querySuccessMsg{tableName: request.tableName, result: result}
+	}
+}
+
+func runScanCmd(client *aws.Client, tableName string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return scanErrorMsg{tableName: tableName, err: errors.New("aws client is nil")}
+		}
+
+		result, err := client.Scan(tableName, nil)
+		if err != nil {
+			return scanErrorMsg{tableName: tableName, err: err}
+		}
+
+		return scanSuccessMsg{tableName: tableName, result: result}
+	}
 }

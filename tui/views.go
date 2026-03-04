@@ -69,14 +69,18 @@ func (m Model) queryView() string {
 		tableName = "(none)"
 	}
 
+	formLines := m.renderQueryFields()
+	formContent := lipgloss.JoinVertical(lipgloss.Left, formLines...)
+
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.theme.Title.Render("Query Flow"),
 		"",
 		m.theme.Body.Render("Table: "+tableName),
-		m.theme.Body.Render("Query form fields will be implemented in US-007."),
 		"",
-		m.theme.Hint.Render("Press ctrl+s to switch to scan, esc to return to tables."),
+		formContent,
+		"",
+		m.theme.Hint.Render("Tab/Shift+Tab to move focus, Enter to activate Run Query, Ctrl+S to switch to scan."),
 	)
 	return m.theme.Panel.Render(body)
 }
@@ -92,11 +96,53 @@ func (m Model) scanView() string {
 		m.theme.Title.Render("Scan Flow"),
 		"",
 		m.theme.Body.Render("Table: "+tableName),
-		m.theme.Body.Render("Scan form controls will be implemented in US-007."),
+		m.theme.Body.Render("Scan uses the selected table and runs only when explicitly triggered."),
 		"",
-		m.theme.Hint.Render("Press enter to run scan placeholder, esc to return to tables."),
+		m.renderScanAction(),
+		"",
+		m.theme.Hint.Render("Press Enter to run scan, or Esc to return to tables."),
 	)
 	return m.theme.Panel.Render(body)
+}
+
+func (m Model) renderQueryFields() []string {
+	lines := make([]string, 0, len(m.queryFields)+2)
+	for idx, field := range m.queryFields {
+		marker := "  "
+		if idx == m.queryFocus {
+			marker = "> "
+		}
+
+		label := field.label
+		if field.required {
+			label += " *"
+		}
+
+		value := field.value
+		if strings.TrimSpace(value) == "" {
+			value = m.theme.Hint.Render(field.placeholder)
+		}
+
+		row := fmt.Sprintf("%s%-24s %s", marker, label+":", value)
+		if idx == m.queryFocus {
+			row = m.theme.Highlight.Render(row)
+		}
+
+		lines = append(lines, row)
+	}
+
+	action := "  [ Run Query ]"
+	if m.queryFocus == len(m.queryFields) {
+		action = m.theme.Highlight.Render("> [ Run Query ]")
+	}
+	lines = append(lines, "")
+	lines = append(lines, action)
+
+	return lines
+}
+
+func (m Model) renderScanAction() string {
+	return m.theme.Highlight.Render("> [ Run Scan ]")
 }
 
 func (m Model) errorView() string {
