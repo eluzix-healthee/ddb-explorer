@@ -39,7 +39,7 @@ make build
 
 ### Running the Application
 
-Run with default profile (dev):
+Run with default profile (prod):
 ```bash
 ./ddb-explorer
 ```
@@ -51,7 +51,7 @@ make
 
 Run with a specific profile:
 ```bash
-./ddb-explorer --profile prod
+./ddb-explorer --profile dev
 ```
 
 ### Keyboard Shortcuts

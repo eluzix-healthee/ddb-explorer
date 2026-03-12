@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-var profile = flag.String("profile", "dev", "AWS profile to use (dev or prod)")
+var profile = flag.String("profile", "prod", "AWS profile to use (dev or prod)")
 var showHelp = flag.Bool("help", false, "Show help and usage information")
 
 func printHelp() {
@@ -18,7 +18,7 @@ USAGE:
     ddb-explorer [--profile PROFILE]
 
 OPTIONS:
-    --profile    AWS profile to use (default: dev)
+    --profile    AWS profile to use (default: prod)
     --help       Show this help message`)
 }
 

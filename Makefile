@@ -38,17 +38,17 @@ install: build
 	@echo "$(GREEN)✓ Installed $(BINARY_NAME) - restart your shell or run 'source ~/.zshrc'$(RESET)"
 	@echo
 
-# Run the application with dev profile
+# Run the application with prod profile (default)
 .PHONY: run
 run: build
-	@echo "$(BLUE)▶️  Running $(BINARY_NAME) with dev profile...$(RESET)"
+	@echo "$(BLUE)▶️  Running $(BINARY_NAME) with prod profile...$(RESET)"
 	@./$(BINARY_NAME)
 
-# Run the application with prod profile
-.PHONY: run-prod
-run-prod: build
-	@echo "$(BLUE)▶️  Running $(BINARY_NAME) with prod profile...$(RESET)"
-	@./$(BINARY_NAME) --profile prod
+# Run the application with dev profile
+.PHONY: run-dev
+run-dev: build
+	@echo "$(BLUE)▶️  Running $(BINARY_NAME) with dev profile...$(RESET)"
+	@./$(BINARY_NAME) --profile dev
 
 # Show help for the CLI
 .PHONY: help-cli
